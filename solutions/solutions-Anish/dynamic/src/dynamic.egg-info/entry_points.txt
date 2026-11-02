@@ -1,0 +1,3 @@
+[console_scripts]
+dynamic-analysis = dynamic:analyse
+dynamic-interpreter = dynamic:interpret

@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: dynamic
+Version: 0.1.0
+Summary: The start of an interperter
+Requires-Python: >=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: jpamb
