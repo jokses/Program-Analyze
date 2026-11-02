@@ -1,0 +1,8 @@
+pyproject.toml
+src/dynamic.py
+src/dynamic.egg-info/PKG-INFO
+src/dynamic.egg-info/SOURCES.txt
+src/dynamic.egg-info/dependency_links.txt
+src/dynamic.egg-info/entry_points.txt
+src/dynamic.egg-info/requires.txt
+src/dynamic.egg-info/top_level.txt
