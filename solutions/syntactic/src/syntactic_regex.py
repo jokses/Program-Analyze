@@ -4,9 +4,9 @@ A syntactic analyzer for JPAMB.
 
 The benchmark asks whether an outcome is POSSIBLE for at least one input.
 
-Escribe las categorías ("yes"/"no").
+Write the categories ("yes"/"no").
 
-Mira el código fuente del método, condiciones constantes simples, patrones de control de flujo, arreglos, asignaciones nulas, aserciones, divisiones, bucles y una pequeña cantidad de razonamiento interprocedimental.
+Inspect the method source code, simple constant conditions, control-flow patterns, arrays, null assignments, assertions, divisions, loops, and a small amount of interprocedural reasoning.
 """
 
 import logging
@@ -28,14 +28,14 @@ OUTCOMES = (
 
 
 def strip_comments(text):
-    # Quita los comentarios de bloque y de línea para que no interfieran con el análisis.
+    # Remove block and line comments so they do not interfere with the analysis.
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     text = re.sub(r"//.*", "", text)
     return text
 
 
 def find_method_body(content, method_name):
-    # Encuentra el método teniendo en consideración que puede tener if, loops, etc. y no solo el cierre de llaves.
+    # Find the method, taking into account that it may contain if statements, loops, etc., and not just the closing brace.
     pattern = rf"\b{re.escape(method_name)}\s*\([^)]*\)\s*\{{"
     match = re.search(pattern, content)
 
@@ -45,7 +45,7 @@ def find_method_body(content, method_name):
     opening = match.end() - 1
     depth = 0
 
-    # Contador de llaves
+    # Brace counter
     for i in range(opening, len(content)):
         if content[i] == "{":
             depth += 1
@@ -58,41 +58,41 @@ def find_method_body(content, method_name):
 
 
 def remove_strings(text):
-    # Quita las cadenas de texto para que no interfieran con el análisis.
-    # Esto es útil para evitar falsos positivos en patrones de código que podrían aparecer dentro de cadenas.
+    # Remove string literals so they do not interfere with the analysis.
+    # This is useful for avoiding false positives from code patterns that might appear inside strings.
     text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
     text = re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
     return text
 
 
 def normalize(body):
-    # Quita comentarios y cadenas de texto para que no interfieran con el análisis sintáctico.
+    # Remove comments and string literals so they do not interfere with syntactic analysis.
     return remove_strings(strip_comments(body))
 
 
 def has_literal_true(expr):
-    # Comprueba si la expresión es literalmente "true" (ignorando espacios en blanco).
+    # Check whether the expression is literally "true" (ignoring whitespace).
     return re.fullmatch(r"\s*true\s*", expr) is not None
 
 
 def has_literal_false(expr):
-    # Comprueba si la expresión es literalmente "false" (ignorando espacios en blanco).
+    # Check whether the expression is literally "false" (ignoring whitespace).
     return re.fullmatch(r"\s*false\s*", expr) is not None
 
 
 def constant_int(expr):
-    # Si encuentra un entero o una expresión que obtenga un entero lo devuelve
-    # Si no puede determinarlo porque depende de una variable, devuelve None
+    # If an integer or an expression that evaluates to an integer is found, return it.
+    # If it cannot be determined because it depends on a variable, return None.
     expr = expr.strip()
 
-    # Busca especificamente un número entero, posiblemente negativo.
+    # Look specifically for an integer, possibly negative.
     if re.fullmatch(r"-?\d+", expr):
         try:
             return int(expr)
         except ValueError:
             return None
 
-    # Busco [número] [ + o - ] [número]
+    # Look for [number] [ + or - ] [number].
     m = re.fullmatch(r"\(?\s*(-?\d+)\s*([+-])\s*(-?\d+)\s*\)?", expr)
     if m:
         a, op, b = int(m.group(1)), m.group(2), int(m.group(3))
@@ -102,7 +102,7 @@ def constant_int(expr):
 
 
 def definitely_false_condition(expr):
-    # Busco condiciones que sean siempre falsas, como "false" o "1 == 2"
+    # Look for conditions that are always false, such as "false" or "1 == 2".
     expr = expr.strip()
 
     if has_literal_false(expr):
@@ -124,7 +124,7 @@ def definitely_false_condition(expr):
 
 
 def definitely_true_condition(expr):
-    # Busco condiciones que sean siempre verdaderas, como "true" o "1 == 1"
+    # Look for conditions that are always true, such as "true" or "1 == 1".
     expr = expr.strip()
 
     if has_literal_true(expr):
@@ -147,9 +147,9 @@ def definitely_true_condition(expr):
 
 
 def split_top_level_statements(code):
-    # Divide el código en declaraciones de nivel superior, respetando paréntesis y llaves anidadas.
-    # Esto es útil para analizar declaraciones individuales y determinar si hay retornos o errores que afecten la ejecución normal.
-    # Por ejemplo, si hay un `return;` en el nivel superior, cualquier código después de eso es inalcanzable y no debe considerarse para la predicción de resultados.
+    # Split the code into top-level statements, respecting nested parentheses and braces.
+    # This is useful for analyzing individual statements and determining whether there are returns or errors that affect normal execution.
+    # For example, if there is a top-level `return;`, any code after it is unreachable and should not be considered when predicting outcomes.
     result = []
     start = 0
     paren = 0
@@ -176,7 +176,7 @@ def split_top_level_statements(code):
 
 
 def prune_constant_ifs(code):
-    # Reviso condiciones que sean siempre verdaderas o siempre falsas y elimino ramas inalcanzables. Asi si tengo if (true) { ... } else { ... } me quedo solo con la rama verdadera lo que va dentro de if y si es if (false) { ... } else { ... } me quedo solo con el else.
+    # Check for conditions that are always true or always false and remove unreachable branches. For example, with if (true) { ... } else { ... }, keep only the true branch (the contents of the if); with if (false) { ... } else { ... }, keep only the else branch.
     changed = True
     while changed:
         changed = False
@@ -184,32 +184,32 @@ def prune_constant_ifs(code):
         # if (...) { ... } else { ... }
         pattern = re.compile(
             r"if\s*\(\s*(true|false)\s*\)\s*\{"
-            r"(?P<yes>(?:[^{}]|\{[^{}]*\})*)\}" # esta expresion permite capturar el contenido dentro de las llaves del if y meterlas en el grupo "yes"
+            r"(?P<yes>(?:[^{}]|\{[^{}]*\})*)\}" # this expression captures the content inside the if braces and places it in the "yes" group
             r"\s*else\s*\{"
-            r"(?P<no>(?:[^{}]|\{[^{}]*\})*)\}", # esta expresion permite capturar el contenido dentro de las llaves del else y meterlas en el grupo "no"
-            re.S, # esto permite que el punto (.) coincida con cualquier caracter, incluyendo saltos de línea, para poder capturar correctamente el contenido dentro de las llaves aunque tenga varias líneas
+            r"(?P<no>(?:[^{}]|\{[^{}]*\})*)\}", # this expression captures the content inside the else braces and places it in the "no" group
+            re.S, # this allows the dot (.) to match any character, including line breaks, so the content inside the braces can be captured correctly even when it spans multiple lines
         )
 
-        # este metodo busca si en el codigo hay un if y un else
+        # This function checks whether the code contains an if and an else.
         def replace_if_else(match):
             nonlocal changed
             changed = True
             return match.group("yes") if match.group(1) == "true" else match.group("no")
 
-        # aqui busca en code el pattern encontrado y lo reemplaza con el resultado de la funcion replace_if_else, que devuelve el contenido del if o del else segun corresponda
+        # Here, search the code for the matched pattern and replace it with the result of replace_if_else, which returns the contents of the if or else branch as appropriate.
         new_code = pattern.sub(replace_if_else, code)
         if new_code != code:
             code = new_code
             continue
 
-        # esto es en caso de que haya if sin un else
+        # This handles the case where an if has no else.
         pattern = re.compile(
             r"if\s*\(\s*(true|false)\s*\)\s*\{"
-            r"(?P<body>(?:[^{}]|\{[^{}]*\})*)\}", # esta expresion permite capturar el contenido dentro de las llaves del if y meterlas en el grupo "body"
+            r"(?P<body>(?:[^{}]|\{[^{}]*\})*)\}", # this expression captures the content inside the if braces and places it in the "body" group
             re.S,
         )
 
-        # este metodo busca si en el codigo hay un if sin else
+        # This function checks whether the code contains an if without an else.
         def replace_if(match):
             nonlocal changed
             changed = True
@@ -223,16 +223,16 @@ def prune_constant_ifs(code):
 
 
 def reachable_code(body):
-    # Elimina código inalcanzable después de un `return;` o `return expression;` de nivel superior, y simplifica los `if`/`else` constantes antes de buscar errores alcanzables.
-    # Esto es útil para evitar falsos positivos en análisis de errores, ya que el código después de un retorno no se ejecutará y no debería considerarse para la predicción de resultados.
+    # Remove unreachable code after a top-level `return;` or `return expression;`, and simplify constant `if`/`else` branches before looking for reachable errors.
+    # This is useful for avoiding false positives in error analysis, since code after a return will not execute and should not be considered when predicting outcomes.
 
-    # Si el cuerpo del método está encerrado en llaves, elimino las llaves externas para analizar solo el contenido interno.
+    # If the method body is enclosed in braces, remove the outer braces to analyze only the inner content.
     code = body[1:-1] if body.startswith("{") and body.endswith("}") else body
 
-    # Aqui uso la funcion prune_constant_ifs para eliminar ifs que sean siempre verdaderos o siempre falsos, dejando solo el bloque de codigo que se ejecutaria.
+    # Here, use the prune_constant_ifs function to remove if statements that are always true or always false, keeping only the code block that would execute.
     code = prune_constant_ifs(code)
     
-    # Si después de revisar los ifs constantes no encuentro un return, busco el primer return de nivel superior y devuelvo solo el código hasta ese punto.
+    # After checking constant if statements, if no return is found, look for the first top-level return and return only the code up to that point.
     statements = split_top_level_statements(code)
     kept = []
     for statement in statements:
@@ -244,28 +244,28 @@ def reachable_code(body):
 
 
 def find_constant_arrays(code):
-    # Detecta inicializadores de arreglos y asignaciones de longitud constante para poder analizar accesos a índices de arreglos y detectar posibles errores de desbordamiento de índice. 
+    # Detect array initializers and constant-length assignments so array index accesses can be analyzed and potential index-out-of-bounds errors detected.
     arrays = {}
 
-    # Buscame un array de x tipos de datos primitivos o String, con la sintaxis tipo: int a[] = {1, 2, 3}; y guardame el nombre del array y la cantidad de elementos que tiene.
+    # Look for an array of one of these primitive data types or String, using syntax such as: int a[] = {1, 2, 3}; store the array name and the number of elements it contains.
     pattern = re.compile(
         r"(?:byte|short|int|long|float|double|char|boolean|String)"
         r"\s+(\w+)\s*\[\s*\]\s*=\s*\{([^{}]*)\}\s*;"
-        # (\w+) captura el nombre del array
-        # ([^{}]*) captura los valores dentro de las llaves, separados por comas
+        # (\w+) captures the array name
+        # ([^{}]*) captures the values inside the braces, separated by commas
     )
-    # Busco también la sintaxis tipo: int[] a = {1, 2, 3}; y guardame el nombre del array y la cantidad de elementos que tiene.
+    # Also look for syntax such as: int[] a = {1, 2, 3}; store the array name and the number of elements it contains.
     pattern2 = re.compile(
         r"(?:byte|short|int|long|float|double|char|boolean|String)"
         r"\s*\[\s*\]\s*(\w+)\s*=\s*\{([^{}]*)\}\s*;"
     )
 
-    # Busco ambos patrones en el código y guardo el nombre del array y la cantidad de elementos que tiene.
+    # Search for both patterns in the code and store the array name and the number of elements it contains.
     for m in list(pattern.finditer(code)) + list(pattern2.finditer(code)):
         values = [x for x in m.group(2).split(",") if x.strip()]
         arrays[m.group(1)] = len(values)
 
-    # Busco también la sintaxis tipo: int a[] = new int[10]; y guardame el nombre del array y la cantidad de elementos que tiene.
+    # Also look for syntax such as: int a[] = new int[10]; store the array name and the number of elements it contains.
     pattern = re.compile(
         r"(?:byte|short|int|long|float|double|char|boolean|String)\s*"
         r"\[\s*\]\s+(\w+)\s*=\s*new\s+\w+\s*\[\s*(\d+)\s*\]"
@@ -278,7 +278,7 @@ def find_constant_arrays(code):
 
 
 def analyze_assertions(code):
-    # Detecta aserciones que son siempre verdaderas o siempre falsas. Cualquier otra expresión es potencialmente falsa para alguna entrada, por lo que es un 'sí' conservador.
+    # Detect assertions that are always true or always false. Any other expression may be false for some input, so the conservative prediction is 'yes'.
     assertions = re.findall(r"\bassert\s+([^;]+);", code)
 
     if not assertions:
@@ -290,37 +290,37 @@ def analyze_assertions(code):
         if has_literal_true(condition):
             continue
 
-        # Un assert false es un error garantizado si es alcanzable.
+        # An assert false is a guaranteed error if it is reachable.
         if has_literal_false(condition):
             return True
 
-        # Si es assert pero sin una condición literal, es potencialmente falsa para alguna entrada.
+        # If it is an assert without a literal condition, it may be false for some input.
         return True
 
     return False
 
 
 def analyze_division(code):
-    # Predice si es posible una división por cero.
-    #    1. literal / 0: definitivamente peligrosa;
-    #    2. división por una variable: cero es una entrada posible;
-    #    3. división por una expresión que contiene una variable: la expresión potencialmente puede evaluarse como cero.
+    # Predict whether division by zero is possible.
+    #     1. literal / 0: definitely dangerous;
+    #     2. division by a variable: zero is a possible input;
+    #     3. division by an expression containing a variable: the expression may potentially evaluate to zero.
 
-    # Evitamos tratar 'if (n != 0) return 1/n' como peligrosa cuando el divisor está protegido por una condición simple.
+    # Avoid treating 'if (n != 0) return 1/n' as dangerous when the divisor is protected by a simple condition.
     
-    # Esto busca un cero literalmente y que acabe con un límite de palabra o un punto y coma, coma o paréntesis de cierre para evitar falsos positivos como 10/0.5
+    # This looks for a literal zero followed by a word boundary, semicolon, comma, or closing parenthesis to avoid false positives such as 10/0.5.
     if re.search(r"/\s*0(?:\b|[;,)])", code):
         return True
 
-    # Una división por una variable o una expresión que contiene una variable es potencialmente peligrosa.
+    # Division by a variable or by an expression containing a variable is potentially dangerous.
     variable_divisions = re.findall(
         r"/\s*([A-Za-z_]\w*)\b",
         code,
     )
 
     for variable in variable_divisions:
-        # Revisar si son valores que se pueden proteger con un if simple
-        #  por ejemplo  if (n != 0) { return 1 / n; }
+        # Check whether these values can be protected by a simple if statement.
+        #   for example, if (n != 0) { return 1 / n; }
         protected = re.search(
             rf"if\s*\(\s*{re.escape(variable)}\s*!=\s*0\s*\)\s*\{{[^}}]*"
             rf"/\s*{re.escape(variable)}\b",
@@ -328,8 +328,8 @@ def analyze_division(code):
             flags=re.S,
         )
 
-        # También está protegida si el caso variable == 0
-        # se elimina antes de llegar a la división.
+        # It is also protected if the variable == 0 case
+        # is eliminated before reaching the division.
         if not protected:
             protected = re.search(
                 rf"if\s*\(\s*{re.escape(variable)}\s*==\s*0\s*\)\s*\{{[^}}]*"
@@ -342,7 +342,7 @@ def analyze_division(code):
         if not protected:
             return True
 
-    # Revisar si hay divisiones por expresiones que contienen variables, como 1/(n+1) o 1/(x-2) si es solo numeros sin variables no es peligroso, pero si hay una variable es potencialmente peligrosa.
+    # Check for divisions by expressions containing variables, such as 1/(n+1) or 1/(x-2). If the expression contains only numbers and no variables, it is not dangerous; if it contains a variable, it is potentially dangerous.
     for expression in re.findall(r"/\s*\(([^()]*)\)", code):
         if re.search(r"[A-Za-z_]\w*", expression):
             return True
@@ -354,9 +354,9 @@ def analyze_division(code):
 
 
 def analyze_null_pointer(code):
-    # Rastrea el patrón sencillo de referencia nula de asignar una variable a null y luego intentar acceder a ella o llamar a un método en ella. Esto es un 'sí' conservador.
+    # Track the simple null-reference pattern of assigning a variable to null and then attempting to access it or call a method on it. The conservative prediction is 'yes'.
     
-    # Busca arrays que se asignan explícitamente a null
+    # Look for arrays that are explicitly assigned null.
     null_vars = set(
         re.findall(
             r"\b(?:\w+\s*\[\]|\w+)\s+(\w+)\s*=\s*null\s*;",
@@ -365,13 +365,13 @@ def analyze_null_pointer(code):
     )
 
     for var in null_vars:
-        # Reviso si accede al Array / .length / method invocation / field access.
-        # busco especificamente la variable sin que forme parte de un string y seguida de un corchete, punto o paréntesis para detectar accesos a arreglos, llamadas a métodos o acceso a campos.
+        # Check whether the code accesses the array, uses .length, invokes a method, or accesses a field.
+        # Look specifically for the variable outside a string, followed by a bracket, dot, or parenthesis, to detect array accesses, method calls, or field accesses.
         if re.search(
             rf"\b{re.escape(var)}\s*(?:\[|\.|\()",
             code,
         ):
-            # Si hay una declaración de la variable a null seguida de un acceso, es un error garantizado.
+            # If the variable is declared as null and then accessed, it is a guaranteed error.
             declaration = re.search(
                 rf"\b{re.escape(var)}\s*=\s*null\s*;",
                 code,
@@ -386,7 +386,7 @@ def analyze_null_pointer(code):
 
 
 
-    # Aqui es si busco un patrón de null dereference como (Type) null.method() o (Type) null.field, que es un error garantizado.
+    # Here, look for a null-dereference pattern such as (Type) null.method() or (Type) null.field, which is a guaranteed error.
     if re.search(r"\(\s*\w+\s*\)\s*null\s*\.", code):
         return True
 
@@ -395,10 +395,10 @@ def analyze_null_pointer(code):
 
 
 def analyze_out_of_bounds(code, arrays):
-    # Detecta errores simples de índice de arreglo que pueden demostrarse estáticamente.
-    # Para una longitud conocida N: a[N] y a[N+1] y a[-1] está fuera de rango.
-    # Para un índice variable desconocido, conservadoramente decimos 'sí' porque una entrada puede hacerlo demasiado grande o negativo.
-    # También detectamos `a.length` de forma segura; leer la longitud no es un error de índice fuera de rango.
+    # Detect simple array-index errors that can be proven statically.
+    # For a known length N, a[N], a[N+1], and a[-1] are out of bounds.
+    # For an unknown variable index, conservatively say 'yes' because an input could make it too large or negative.
+    # We also handle `a.length` safely; reading the length is not an out-of-bounds access.
     
     for array, length in arrays.items():
         accesses = re.finditer(
@@ -415,17 +415,17 @@ def analyze_out_of_bounds(code, arrays):
                     return True
                 continue
 
-            # Una variable o expresión desconocida puede tomar un valor inválido.
+            # An unknown variable or expression may take an invalid value.
             return True
 
-    # No deberia estar buscando en declaraciones como si fueran accesos
+    # Declarations should not be treated as accesses.
     # `int[] a = new int[5]`.
     return False
 
 
 def analyze_infinite_loop(code): 
-    # Detecta bucles que sintácticamente están garantizados que no terminan, como while (true), while (1 == 1) y while (i > 0), donde i se inicializa con una constante positiva y nunca se modifica dentro del bucle.
-    # No afirmamos deliberadamente que todos los bucles while/for son infinitos.
+    # Detect loops that are syntactically guaranteed not to terminate, such as while (true), while (1 == 1), and while (i > 0), where i is initialized to a positive constant and is never modified inside the loop.
+    # We deliberately do not claim that all while/for loops are infinite.
     
     # while(true)
     if re.search(r"\bwhile\s*\(\s*true\s*\)", code):
@@ -434,13 +434,13 @@ def analyze_infinite_loop(code):
     if re.search(r"\bfor\s*\(\s*;\s*true\s*;\s*\)", code):
         return True
 
-    # Condiciones constantes y verdaderas
+    # Constant true conditions
     for condition in re.findall(r"\bwhile\s*\(([^)]*)\)", code):
         if definitely_true_condition(condition):
             return True
 
 
-    # aqui reviso que haga una declaracion por ej int contador = 1
+    # Here, check for a declaration such as int counter = 1.
     assignments = {
         name: int(value)
         for name, value in re.findall(
@@ -449,7 +449,7 @@ def analyze_infinite_loop(code):
         )
     }
 
-    # aqui busco un while con una condicion que sea una variable y un operador de comparacion con un limite constante, por ejemplo while (contador > 0) el segundo comparado es un numero
+    # Here, look for a while loop whose condition uses a variable and a comparison operator with a constant limit; for example, while (counter > 0), where the second operand is a number.
     for condition in re.findall(r"\bwhile\s*\(([^)]*)\)", code):
         m = re.fullmatch(
             r"\s*(\w+)\s*(>|>=|<|<=|==|!=)\s*(-?\d+)\s*",
@@ -462,7 +462,7 @@ def analyze_infinite_loop(code):
         if variable not in assignments:
             continue
 
-        # Encontrar especificamente el while (variable op limit)
+        # Find the specific while (variable op limit) loop.
         while_match = re.search(
             rf"\bwhile\s*\(\s*{re.escape(variable)}\s*"
             rf"{re.escape(op)}\s*{limit}\s*\)\s*\{{",
@@ -471,7 +471,7 @@ def analyze_infinite_loop(code):
         if not while_match:
             continue
 
-        # coger el interior del while contando las llaves
+        # Get the contents of the while loop by counting braces.
         open_brace = code.find("{", while_match.end() - 1)
         depth = 0
         end = None
@@ -489,7 +489,7 @@ def analyze_infinite_loop(code):
 
         loop_body = code[open_brace + 1 : end]
 
-        # Revisar si la variable se incrementa o decrementa dentro del bucle. Si no se modifica, el bucle es potencialmente infinito.
+        # Check whether the variable is incremented or decremented inside the loop. If it is not modified, the loop is potentially infinite.
         if not re.search(
             rf"\b{re.escape(variable)}\s*(?:\+\+|--|[+\-*/%]?=)",
             loop_body,
@@ -509,44 +509,44 @@ def analyze_infinite_loop(code):
 
 
 def analyze_returns_and_ok(code, errors):
-    # Determina si el método puede terminar normalmente (es decir, sin errores y sin entrar en un bucle infinito).
+    # Determine whether the method can terminate normally (that is, without errors and without entering an infinite loop).
     if errors["*"]:
         return False
 
-    # Si hay un assert false, es un error garantizado a menos que esté dentro de un if que lo excluya.
+    # If there is an assert false, it is a guaranteed error unless it is inside an if statement that excludes it.
     if re.search(r"\bassert\s+false\s*;", code):
-        # Si hay un if que excluye el assert false, entonces puede haber un camino normal.
+        # If an if statement excludes the assert false, a normal execution path may exist.
         if not re.search(r"\bif\s*\(", code):
             return False
 
-    # Si hay una división por cero, es un error garantizado a menos que esté dentro de un if que lo excluya.
+    # If there is a division by zero, it is a guaranteed error unless it is inside an if statement that excludes it.
     if errors["divide by zero"] and re.search(r"/\s*0\b", code):
         if re.search(r"\bif\s*\(", code):
             return True
         return False
 
-    # Si hay un puntero nulo o un índice fuera de rango, es un error garantizado a menos que esté dentro de un if que lo excluya.
+    # If there is a null pointer or an out-of-bounds index, it is a guaranteed error unless it is inside an if statement that excludes it.
     if errors["null pointer"] or errors["out of bounds"]:
         if re.search(r"\bif\s*\(", code) or re.search(r"\bfor\s*\(", code):
             return True
         return False
 
-    # Si no hay errores de bucle infinito, assert false, división por cero, puntero nulo o índice fuera de rango, entonces el método puede terminar normalmente.
+    # If there are no infinite-loop, assert false, division-by-zero, null-pointer, or out-of-bounds errors, the method can terminate normally.
     return True
 
 
 def extract_methods(content):
     
-    # Extrae todas las declaraciones de métodos de un archivo fuente Java.
+    # Extract all method declarations from a Java source file.
 
-    # Esto se utiliza únicamente para realizar un análisis interprocedimental limitado. Calls.java coloca intencionadamente métodos auxiliares como assertFalse() antes de los métodos @Case, por lo que examinar solo el método solicitado haría que se ignoraran sus efectos.
+    # This is used only for limited interprocedural analysis. Calls.java intentionally places helper methods such as assertFalse() before the @Case methods, so examining only the requested method would ignore their effects.
     
     methods = {}
-    # Este patrón de expresión regular coincide con la firma de un método Java, incluyendo modificadores, tipo de retorno, nombre del método y parámetros. Captura el nombre del método y los parámetros para su posterior análisis.
+    # This regular expression pattern matches a Java method signature, including modifiers, return type, method name, and parameters. It captures the method name and parameters for later analysis.
     signature = re.compile(
         r"(?:public|private|protected|static|final|synchronized|native|abstract|"
         r"\s)+"
-        r"(?:[\w<>,\[\]?]+\s+)+" # tipo de retorno y acepta cosas como List<String> o int[] o Map<K, V>
+        r"(?:[\w<>,\[\]?]+\s+)+" # return type; supports forms such as List<String>, int[], or Map<K, V>
         r"(\w+)\s*\(([^)]*)\)\s*\{"
     )
 
@@ -558,7 +558,7 @@ def extract_methods(content):
         if params_text:
             for part in params_text.split(","):
                 part = part.strip()
-                # El patrón de expresión regular busca el nombre del parámetro al final de la declaración del parámetro, ignorando el tipo y cualquier modificador. Esto permite capturar correctamente los nombres de los parámetros incluso si hay tipos genéricos o arreglos.
+                # The regular expression pattern looks for the parameter name at the end of the parameter declaration, ignoring the type and any modifiers. This correctly captures parameter names even when generic types or arrays are used.
                 name_match = re.search(r"(\w+)\s*$", part)
                 if name_match:
                     params.append(name_match.group(1))
@@ -574,13 +574,13 @@ def extract_methods(content):
                     methods[name] = (params, content[opening:i + 1])
                     break
 
-    # devuelve un diccionario con el nombre del método como clave y una tupla de (parámetros, cuerpo del método) como valor. Esto permite un análisis interprocedimental limitado al examinar los métodos auxiliares definidos en el mismo archivo fuente.
+    # Return a dictionary with the method name as the key and a tuple of (parameters, method body) as the value. This allows limited interprocedural analysis by examining helper methods defined in the same source file.
     return methods
 
 
 def parse_call_arguments(arguments):
-    # Divide argumentos simples de llamadas respetando los paréntesis anidados.
-    # Si le mando una cadena como "a, b(c, d), e" devuelve ["a", "b(c, d)", "e"].
+    # Split simple call arguments while respecting nested parentheses.
+    # If given a string such as "a, b(c, d), e", return ["a", "b(c, d)", "e"].
     result = []
     start = 0
     depth = 0
@@ -602,16 +602,16 @@ def parse_call_arguments(arguments):
 
 
 def substitute_arguments(body, params, args):
-    # Inserta argumentos constantes simples en una llamada.
-    # Esto es útil para propagar efectos de métodos auxiliares que toman parámetros constantes, como assertFalse(true) -> assert false.
-    # Si el número de parámetros y argumentos no coincide, devuelve el cuerpo sin cambios.
+    # Insert simple constant arguments into a call.
+    # This is useful for propagating the effects of helper methods that take constant parameters, such as assertFalse(true) -> assert false.
+    # If the number of parameters and arguments does not match, return the body unchanged.
 
     if len(params) != len(args):
         return body
 
     for param, arg in zip(params, args):
         if re.fullmatch(
-            # acepta true, o false, o un número, o un string entre comillas simples, o un string entre comillas dobles.
+            # accepts true, false, a number, a single-quoted string, or a double-quoted string.
             r"\s*(?:true|false|-?\d+|'[^']*'|\"[^\"]*\")\s*",
             arg,
         ):
@@ -625,9 +625,9 @@ def substitute_arguments(body, params, args):
 
 
 def analyze_calls(code, methods, call_stack):
-    # Analiza los efectos de los métodos llamados por el método actual.
+    # Analyze the effects of methods called by the current method.
 
-    # Este análisis es deliberadamente superficial y seguro frente a ciclos. Es suficiente para propagar efectos evidentes de métodos auxiliares, como callsAssertFalse -> assertFalse().
+    # This analysis is deliberately shallow and cycle-safe. It is sufficient to propagate obvious effects of helper methods, such as callsAssertFalse -> assertFalse().
     
     result = {
         "ok": True,
@@ -641,13 +641,13 @@ def analyze_calls(code, methods, call_stack):
     if not methods:
         return result
 
-    # Palabras clave de Java que parecen llamadas pero no son invocaciones de métodos.
+    # Java keywords that look like calls but are not method invocations.
     ignored = {
         "if", "for", "while", "switch", "catch", "return",
         "assert", "new", "synchronized",
     }
 
-    # Aqui busco llamadas a métodos con la sintaxis nombreMetodo(argumentos) y capturo el nombre del método y los argumentos para analizarlos.
+    # Here, look for method calls with the syntax methodName(arguments) and capture the method name and arguments for analysis.
     call_pattern = re.compile(r"\b([A-Za-z_]\w*)\s*\(([^()]*)\)")
 
     for match in call_pattern.finditer(code):
@@ -666,9 +666,9 @@ def analyze_calls(code, methods, call_stack):
             call_stack=call_stack + (name,),
         )
 
-        # Si el método llamado no tiene una ruta de terminación normal,
+        # If the called method has no normal termination path,
         # una llamada incondicional tampoco tiene una ruta normal. Esto es
-        # especialmente útil para callsAssertFalse().
+        # especially useful for callsAssertFalse().
         result["ok"] &= nested["ok"]
 
         for outcome in (
@@ -684,24 +684,24 @@ def analyze_calls(code, methods, call_stack):
 
 
 def analyze_method(body, methods=None, call_stack=()):
-    # Ejecuta todos los análisis y devuelve un diccionario con predicciones booleanas de resultados.
+    # Run all analyses and return a dictionary with boolean outcome predictions.
     
     code = normalize(body)
 
-    # 'reachable_code' elimina principalmente la parte final obvia después de `return;`.
+    # 'reachable_code' mainly removes the obvious trailing portion after `return;`.
     reachable = reachable_code(code)
 
-    # 'find_constant_arrays' detecta inicializadores de arreglos y asignaciones de longitud constante para poder analizar accesos a índices de arreglos y detectar posibles errores de desbordamiento de índice.
+    # 'find_constant_arrays' detects array initializers and constant-length assignments so array index accesses can be analyzed and potential index-out-of-bounds errors detected.
     arrays = find_constant_arrays(code)
 
-    # Ejecuta los análisis de errores alcanzables y predice si el método puede terminar normalmente.
+    # Run the reachable-error analyses and predict whether the method can terminate normally.
     assertion_error = analyze_assertions(reachable)
     divide_by_zero = analyze_division(reachable)
     null_pointer = analyze_null_pointer(reachable)
     out_of_bounds = analyze_out_of_bounds(reachable, arrays)
     infinite_loop = analyze_infinite_loop(reachable)
 
-    # consulto si hay métodos auxiliares para hacer un análisis interprocedimental limitado. Si no hay métodos, se asume que no hay errores adicionales.
+    # Check whether helper methods are available for limited interprocedural analysis. If there are no methods, assume there are no additional errors.
     called = analyze_calls(reachable, methods, call_stack) if methods else {
         "ok": True,
         "divide by zero": False,
@@ -711,7 +711,7 @@ def analyze_method(body, methods=None, call_stack=()):
         "*": False,
     }
 
-    # Combina los errores locales con los errores de llamadas
+    # Combine local errors with errors from method calls.
     assertion_error |= called["assertion error"]
     divide_by_zero |= called["divide by zero"]
     out_of_bounds |= called["out of bounds"]
@@ -729,11 +729,11 @@ def analyze_method(body, methods=None, call_stack=()):
     ok = analyze_returns_and_ok(reachable, errors)
     ok &= called["ok"]
 
-    # Casos de precedencia fuerte: si todo el método alcanzable es un bucle infinito incondicional evidente, tampoco puede finalizar normalmente.
+    # Strong-precedence cases: if the entire reachable method is an obvious unconditional infinite loop, it cannot terminate normally either.
     if infinite_loop:
         ok = False
 
-    # Un 'assert false' literal sin una alternativa de flujo de control no puede ser correcto.
+    # A literal 'assert false' with no alternative control-flow path cannot be correct.
     if re.fullmatch(r"\s*assert\s+false\s*;\s*", reachable.strip()):
         ok = False
 
@@ -748,9 +748,9 @@ def analyze_method(body, methods=None, call_stack=()):
 
 
 def print_predictions(predictions):
-    # JPAMB acepta categorías como 'yes' y 'no'.
+    # JPAMB accepts categories such as 'yes' and 'no'.
 
-    # Uso yes/no en lugar de apuestas grandes. Después, el benchmark aprende la apuesta óptima para cada categoría, que es exactamente el mecanismo de calibración descrito en rules.md.
+    # Use yes/no instead of large bets. The benchmark then learns the optimal bet for each category, which is exactly the calibration mechanism described in rules.md.
     
     for outcome in OUTCOMES:
         category = "yes" if predictions[outcome] else "no"
@@ -762,7 +762,7 @@ def main():
     # 1. JPAMB setup
     # ---------------------------------------------------------------------
 
-    # Nombre del analizador, versión, team/group name?, descripción de approach, system info
+    # Analyzer name, version, team/group name?, approach description, system information.
     absmethodid = jpamb.getmethodid(
         "September Syntactic Analyzer",
         "1.0",
@@ -786,9 +786,9 @@ def main():
     # ---------------------------------------------------------------------
     # 2. Find the method
     # ---------------------------------------------------------------------
-    # Hay que buscar más que solo el cierre de llaves porque puede ser if o loops.
+    # We need to search for more than just the closing brace because there may be if statements or loops.
     
-    # ahora busca el método en el contenido del archivo fuente 
+    # Now search for the method in the source file content.
     method_name = absmethodid.methodid.name
     body = find_method_body(content, method_name)
 
@@ -799,15 +799,15 @@ def main():
     log.debug("found method %s", method_name)
     log.debug("method body: %s", body)
 
-    # Quitar comentarios y strings para que no confundan el análisis sintáctico con palabras clave dentro de ellos.
-    # por ejemplo // assert false o "assert false"
+    # Remove comments and strings so that keywords inside them do not confuse the syntactic analysis.
+    # for example, // assert false or "assert false".
     rest = normalize(body)
 
     # ---------------------------------------------------------------------
     # 3. Assertion error analysis
     # ---------------------------------------------------------------------
-    # Diferencia assert true (no error) de assert false (error garantizado). 
-    # Cualquier otra expresión es potencialmente falsa para alguna entrada, por lo que es un 'sí' conservador.
+    # Distinguish assert true (no error) from assert false (guaranteed error).
+    # Any other expression may be false for some input, so the conservative prediction is 'yes'.
 
     assert_found = analyze_assertions(reachable_code(rest))
 
@@ -819,7 +819,7 @@ def main():
     # ---------------------------------------------------------------------
     # 4. Divide by zero analysis
     # ---------------------------------------------------------------------
-    # Si la división es claramente cero, si es una variable o si es una expresión que contiene una variable, es un 'sí' conservador.
+    # If the divisor is clearly zero, is a variable, or is an expression containing a variable, the conservative prediction is 'yes'.
 
     divide_by_zero_found = analyze_division(reachable_code(rest))
 
@@ -831,7 +831,7 @@ def main():
     # ---------------------------------------------------------------------
     # 5. Null pointer analysis
     # ---------------------------------------------------------------------
-    # Acceder a un arreglo o llamar a un método en una variable que se asignó explícitamente a null es un 'sí' conservador.
+    # Accessing an array or calling a method on a variable explicitly assigned null is a conservative 'yes'.
 
     null_pointer_found = analyze_null_pointer(reachable_code(rest))
 
@@ -843,8 +843,8 @@ def main():
     # ---------------------------------------------------------------------
     # 6. Array / out-of-bounds analysis
     # ---------------------------------------------------------------------
-    # Verificación de índices de arreglos que son claramente negativos o mayores o iguales a la longitud conocida del arreglo. 
-    # Un índice desconocido es un 'sí' conservador.
+    # Check array indices that are clearly negative or greater than or equal to the known array length.
+    # An unknown index is a conservative 'yes'.
 
     arrays = find_constant_arrays(rest)
     out_of_bounds_found = analyze_out_of_bounds(
@@ -859,7 +859,7 @@ def main():
     # ---------------------------------------------------------------------
     # 7. Infinite-loop analysis
     # ---------------------------------------------------------------------
-    # Bucles garantizados a no terminar, como while(true) o while(i>0) donde i es una constante positiva y nunca se modifica dentro del bucle.
+    # Loops guaranteed not to terminate, such as while(true) or while(i>0), where i is a positive constant and is never modified inside the loop.
 
     infinite_loop_found = analyze_infinite_loop(reachable_code(rest))
 
@@ -871,19 +871,19 @@ def main():
     # ---------------------------------------------------------------------
     # 8. Calls to other methods in the same class
     # ---------------------------------------------------------------------
-    # Llamadas a otros métodos que sí pueden producir un error como assertFalse() o divideByZero() pero que en ese método del que llama
-    # no tiene directamente esos posibles errores sin esa llamada a los métodos.
+    # Calls to other methods that can produce an error, such as assertFalse() or divideByZero(), but that the calling method itself
+    # does not directly contain as potential errors without those method calls.
 
     methods = extract_methods(content)
     called = analyze_calls(
         reachable_code(rest),
         methods,
-        # esto evita ciclos infinitos en el análisis de llamadas a métodos (por la recursividad)
+        # This prevents infinite cycles in method-call analysis (due to recursion).
         call_stack=(method_name,),
     )
 
-    # El análisis de llamadas puede descubrir un resultado que no era visible en el propio código fuente del llamador.
-    # Imprime las predicciones finales nuevamente solo conceptualmente:
+    # Call analysis may discover an outcome that was not visible in the caller’s own source code.
+    # Conceptually, recompute the final predictions:
 
     predictions = {
         "assertion error": assert_found or called["assertion error"],
@@ -896,8 +896,8 @@ def main():
     # ---------------------------------------------------------------------
     # 9. Can the method finish normally? -> 'ok'
     # ---------------------------------------------------------------------
-    # Un método con una aserción condicional o una división condicional por cero puede tener un camino normal de terminación para alguna entrada. 
-    # Por ejemplo, if (n != 0) return 1/n; else return 0; es un camino normal de terminación para n=0.
+    # A method with a conditional assertion or conditional division by zero may have a normal termination path for some input.
+    # For example, if (n != 0) return 1/n; else return 0; has a normal termination path when n=0.
 
 
     errors = {
@@ -912,7 +912,7 @@ def main():
     ok_found = ok_found and called["ok"]
 
     if predictions["*"]:
-        # Si el método tiene un bucle infinito garantizado, no puede terminar normalmente.
+        # If the method has a guaranteed infinite loop, it cannot terminate normally.
         ok_found = False
 
     predictions["ok"] = ok_found
@@ -920,8 +920,8 @@ def main():
     # ---------------------------------------------------------------------
     # 10. Final output
     # ---------------------------------------------------------------------
-    # Imprime las predicciones finales en el formato esperado por JPAMB.
-    # en rules.md se describe las salidas yes/no
+    # Print the final predictions in the format expected by JPAMB.
+    # The yes/no outputs are described in rules.md.
     print_predictions(predictions)
 
 
