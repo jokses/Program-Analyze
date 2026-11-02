@@ -1,0 +1,11 @@
+pyproject.toml
+src/abstraction.py
+src/abstractions.py
+src/static.py
+src/static.egg-info/PKG-INFO
+src/static.egg-info/SOURCES.txt
+src/static.egg-info/dependency_links.txt
+src/static.egg-info/entry_points.txt
+src/static.egg-info/requires.txt
+src/static.egg-info/top_level.txt
+tests/test_abstractions.py
