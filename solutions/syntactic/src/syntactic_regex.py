@@ -16,7 +16,6 @@ from pathlib import Path
 
 import jpamb
 
-
 OUTCOMES = (
     "ok",
     "divide by zero",
@@ -145,7 +144,6 @@ def definitely_true_condition(expr):
     return False
 
 
-
 def split_top_level_statements(code):
     # Split the code into top-level statements, respecting nested parentheses and braces.
     # This is useful for analyzing individual statements and determining whether there are returns or errors that affect normal execution.
@@ -184,10 +182,10 @@ def prune_constant_ifs(code):
         # if (...) { ... } else { ... }
         pattern = re.compile(
             r"if\s*\(\s*(true|false)\s*\)\s*\{"
-            r"(?P<yes>(?:[^{}]|\{[^{}]*\})*)\}" # this expression captures the content inside the if braces and places it in the "yes" group
+            r"(?P<yes>(?:[^{}]|\{[^{}]*\})*)\}"  # this expression captures the content inside the if braces and places it in the "yes" group
             r"\s*else\s*\{"
-            r"(?P<no>(?:[^{}]|\{[^{}]*\})*)\}", # this expression captures the content inside the else braces and places it in the "no" group
-            re.S, # this allows the dot (.) to match any character, including line breaks, so the content inside the braces can be captured correctly even when it spans multiple lines
+            r"(?P<no>(?:[^{}]|\{[^{}]*\})*)\}",  # this expression captures the content inside the else braces and places it in the "no" group
+            re.S,  # this allows the dot (.) to match any character, including line breaks, so the content inside the braces can be captured correctly even when it spans multiple lines
         )
 
         # This function checks whether the code contains an if and an else.
@@ -205,7 +203,7 @@ def prune_constant_ifs(code):
         # This handles the case where an if has no else.
         pattern = re.compile(
             r"if\s*\(\s*(true|false)\s*\)\s*\{"
-            r"(?P<body>(?:[^{}]|\{[^{}]*\})*)\}", # this expression captures the content inside the if braces and places it in the "body" group
+            r"(?P<body>(?:[^{}]|\{[^{}]*\})*)\}",  # this expression captures the content inside the if braces and places it in the "body" group
             re.S,
         )
 
@@ -231,7 +229,7 @@ def reachable_code(body):
 
     # Here, use the prune_constant_ifs function to remove if statements that are always true or always false, keeping only the code block that would execute.
     code = prune_constant_ifs(code)
-    
+
     # After checking constant if statements, if no return is found, look for the first top-level return and return only the code up to that point.
     statements = split_top_level_statements(code)
     kept = []
@@ -268,9 +266,8 @@ def find_constant_arrays(code):
     # Also look for syntax such as: int a[] = new int[10]; store the array name and the number of elements it contains.
     pattern = re.compile(
         r"(?:byte|short|int|long|float|double|char|boolean|String)\s*"
-        r"\[\s*\]\s+(\w+)\s*=\s*new\s+\w+\s*\[\s*(\d+)\s*\]"
+        r"\[\s*\]\s+(\w+)\s*=\s*new\s+\w+\s*\[\s*([^\]]+?)\s*\]"
     )
-
     for m in pattern.finditer(code):
         arrays[m.group(1)] = int(m.group(2))
 
@@ -307,7 +304,7 @@ def analyze_division(code):
     #     3. division by an expression containing a variable: the expression may potentially evaluate to zero.
 
     # Avoid treating 'if (n != 0) return 1/n' as dangerous when the divisor is protected by a simple condition.
-    
+
     # This looks for a literal zero followed by a word boundary, semicolon, comma, or closing parenthesis to avoid false positives such as 10/0.5.
     if re.search(r"/\s*0(?:\b|[;,)])", code):
         return True
@@ -355,7 +352,7 @@ def analyze_division(code):
 
 def analyze_null_pointer(code):
     # Track the simple null-reference pattern of assigning a variable to null and then attempting to access it or call a method on it. The conservative prediction is 'yes'.
-    
+
     # Look for arrays that are explicitly assigned null.
     null_vars = set(
         re.findall(
@@ -384,8 +381,6 @@ def analyze_null_pointer(code):
             ):
                 return True
 
-
-
     # Here, look for a null-dereference pattern such as (Type) null.method() or (Type) null.field, which is a guaranteed error.
     if re.search(r"\(\s*\w+\s*\)\s*null\s*\.", code):
         return True
@@ -393,13 +388,12 @@ def analyze_null_pointer(code):
     return False
 
 
-
 def analyze_out_of_bounds(code, arrays):
     # Detect simple array-index errors that can be proven statically.
     # For a known length N, a[N], a[N+1], and a[-1] are out of bounds.
     # For an unknown variable index, conservatively say 'yes' because an input could make it too large or negative.
     # We also handle `a.length` safely; reading the length is not an out-of-bounds access.
-    
+
     for array, length in arrays.items():
         accesses = re.finditer(
             rf"\b{re.escape(array)}\s*\[\s*([^\]]+)\s*\]",
@@ -423,10 +417,10 @@ def analyze_out_of_bounds(code, arrays):
     return False
 
 
-def analyze_infinite_loop(code): 
+def analyze_infinite_loop(code):
     # Detect loops that are syntactically guaranteed not to terminate, such as while (true), while (1 == 1), and while (i > 0), where i is initialized to a positive constant and is never modified inside the loop.
     # We deliberately do not claim that all while/for loops are infinite.
-    
+
     # while(true)
     if re.search(r"\bwhile\s*\(\s*true\s*\)", code):
         return True
@@ -438,7 +432,6 @@ def analyze_infinite_loop(code):
     for condition in re.findall(r"\bwhile\s*\(([^)]*)\)", code):
         if definitely_true_condition(condition):
             return True
-
 
     # Here, check for a declaration such as int counter = 1.
     assignments = {
@@ -536,17 +529,17 @@ def analyze_returns_and_ok(code, errors):
 
 
 def extract_methods(content):
-    
+
     # Extract all method declarations from a Java source file.
 
     # This is used only for limited interprocedural analysis. Calls.java intentionally places helper methods such as assertFalse() before the @Case methods, so examining only the requested method would ignore their effects.
-    
+
     methods = {}
     # This regular expression pattern matches a Java method signature, including modifiers, return type, method name, and parameters. It captures the method name and parameters for later analysis.
     signature = re.compile(
         r"(?:public|private|protected|static|final|synchronized|native|abstract|"
         r"\s)+"
-        r"(?:[\w<>,\[\]?]+\s+)+" # return type; supports forms such as List<String>, int[], or Map<K, V>
+        r"(?:[\w<>,\[\]?]+\s+)+"  # return type; supports forms such as List<String>, int[], or Map<K, V>
         r"(\w+)\s*\(([^)]*)\)\s*\{"
     )
 
@@ -571,7 +564,7 @@ def extract_methods(content):
             elif content[i] == "}":
                 depth -= 1
                 if depth == 0:
-                    methods[name] = (params, content[opening:i + 1])
+                    methods[name] = (params, content[opening : i + 1])
                     break
 
     # Return a dictionary with the method name as the key and a tuple of (parameters, method body) as the value. This allows limited interprocedural analysis by examining helper methods defined in the same source file.
@@ -624,11 +617,28 @@ def substitute_arguments(body, params, args):
     return body
 
 
+def is_conditional(code, pos):
+    # True if position `pos` in `code` is inside a block ({...}) or directly
+    # after a brace-less if/else/while/for, i.e. it may not be executed.
+    depth = 0
+    for ch in code[:pos]:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(0, depth - 1)
+    if depth > 0:
+        return True
+    # brace-less form: if (x) foo();   or   else foo();
+    statement_start = max(code.rfind(";", 0, pos), code.rfind("}", 0, pos)) + 1
+    prefix = code[statement_start:pos]
+    return re.search(r"\b(?:if|else|while|for)\b", prefix) is not None
+
+
 def analyze_calls(code, methods, call_stack):
     # Analyze the effects of methods called by the current method.
 
     # This analysis is deliberately shallow and cycle-safe. It is sufficient to propagate obvious effects of helper methods, such as callsAssertFalse -> assertFalse().
-    
+
     result = {
         "ok": True,
         "divide by zero": False,
@@ -643,8 +653,15 @@ def analyze_calls(code, methods, call_stack):
 
     # Java keywords that look like calls but are not method invocations.
     ignored = {
-        "if", "for", "while", "switch", "catch", "return",
-        "assert", "new", "synchronized",
+        "if",
+        "for",
+        "while",
+        "switch",
+        "catch",
+        "return",
+        "assert",
+        "new",
+        "synchronized",
     }
 
     # Here, look for method calls with the syntax methodName(arguments) and capture the method name and arguments for analysis.
@@ -685,7 +702,7 @@ def analyze_calls(code, methods, call_stack):
 
 def analyze_method(body, methods=None, call_stack=()):
     # Run all analyses and return a dictionary with boolean outcome predictions.
-    
+
     code = normalize(body)
 
     # 'reachable_code' mainly removes the obvious trailing portion after `return;`.
@@ -702,14 +719,18 @@ def analyze_method(body, methods=None, call_stack=()):
     infinite_loop = analyze_infinite_loop(reachable)
 
     # Check whether helper methods are available for limited interprocedural analysis. If there are no methods, assume there are no additional errors.
-    called = analyze_calls(reachable, methods, call_stack) if methods else {
-        "ok": True,
-        "divide by zero": False,
-        "assertion error": False,
-        "out of bounds": False,
-        "null pointer": False,
-        "*": False,
-    }
+    called = (
+        analyze_calls(reachable, methods, call_stack)
+        if methods
+        else {
+            "ok": True,
+            "divide by zero": False,
+            "assertion error": False,
+            "out of bounds": False,
+            "null pointer": False,
+            "*": False,
+        }
+    )
 
     # Combine local errors with errors from method calls.
     assertion_error |= called["assertion error"]
@@ -751,7 +772,7 @@ def print_predictions(predictions):
     # JPAMB accepts categories such as 'yes' and 'no'.
 
     # Use yes/no instead of large bets. The benchmark then learns the optimal bet for each category, which is exactly the calibration mechanism described in rules.md.
-    
+
     for outcome in OUTCOMES:
         category = "yes" if predictions[outcome] else "no"
         print(f"{outcome};{category}")
@@ -787,7 +808,7 @@ def main():
     # 2. Find the method
     # ---------------------------------------------------------------------
     # We need to search for more than just the closing brace because there may be if statements or loops.
-    
+
     # Now search for the method in the source file content.
     method_name = absmethodid.methodid.name
     body = find_method_body(content, method_name)
@@ -847,9 +868,7 @@ def main():
     # An unknown index is a conservative 'yes'.
 
     arrays = find_constant_arrays(rest)
-    out_of_bounds_found = analyze_out_of_bounds(
-        reachable_code(rest), arrays
-    )
+    out_of_bounds_found = analyze_out_of_bounds(reachable_code(rest), arrays)
 
     if out_of_bounds_found:
         log.debug("Found possible out of bounds")
@@ -893,12 +912,18 @@ def main():
         "*": infinite_loop_found or called["*"],
     }
 
+    # infinite_loop_found = analyze_infinite_loop(reachable_code(rest))
+
+    #     if infinite_loop_found:
+    #         log.debug("Found possible infinite loop")
+    #     else:
+    #         log.debug("No possible infinite loop")
+
     # ---------------------------------------------------------------------
-    # 9. Can the method finish normally? -> 'ok'
+    # Can the method finish normally? -> 'ok'
     # ---------------------------------------------------------------------
     # A method with a conditional assertion or conditional division by zero may have a normal termination path for some input.
     # For example, if (n != 0) return 1/n; else return 0; has a normal termination path when n=0.
-
 
     errors = {
         "assertion error": predictions["assertion error"],
@@ -918,7 +943,7 @@ def main():
     predictions["ok"] = ok_found
 
     # ---------------------------------------------------------------------
-    # 10. Final output
+    # Final output
     # ---------------------------------------------------------------------
     # Print the final predictions in the format expected by JPAMB.
     # The yes/no outputs are described in rules.md.
