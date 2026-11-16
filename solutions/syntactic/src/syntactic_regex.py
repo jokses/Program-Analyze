@@ -269,7 +269,9 @@ def find_constant_arrays(code):
         r"\[\s*\]\s+(\w+)\s*=\s*new\s+\w+\s*\[\s*([^\]]+?)\s*\]"
     )
     for m in pattern.finditer(code):
-        arrays[m.group(1)] = int(m.group(2))
+        size = m.group(2).strip()
+        value = constant_int(size)
+        arrays[m.group(1)] = value if value is not None else size
 
     return arrays
 
@@ -618,20 +620,15 @@ def substitute_arguments(body, params, args):
 
 
 def is_conditional(code, pos):
-    # True if position `pos` in `code` is inside a block ({...}) or directly
-    # after a brace-less if/else/while/for, i.e. it may not be executed.
     depth = 0
     for ch in code[:pos]:
         if ch == "{":
             depth += 1
         elif ch == "}":
             depth = max(0, depth - 1)
-    if depth > 0:
-        return True
-    # brace-less form: if (x) foo();   or   else foo();
-    statement_start = max(code.rfind(";", 0, pos), code.rfind("}", 0, pos)) + 1
-    prefix = code[statement_start:pos]
-    return re.search(r"\b(?:if|else|while|for)\b", prefix) is not None
+        if depth > 0:
+            return True
+        statement_start = max(code.rfind(";", 0, pos), code.rfind("}", 0, pos)) + 1
 
 
 def analyze_calls(code, methods, call_stack):
@@ -686,7 +683,8 @@ def analyze_calls(code, methods, call_stack):
         # If the called method has no normal termination path,
         # una llamada incondicional tampoco tiene una ruta normal. Esto es
         # especially useful for callsAssertFalse().
-        result["ok"] &= nested["ok"]
+        if not is_conditional(code, match.start()):
+            result["ok"] &= nested["ok"]
 
         for outcome in (
             "divide by zero",
