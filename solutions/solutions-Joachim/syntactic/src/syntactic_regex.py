@@ -11,15 +11,16 @@ import jpamb
 
 def main():
     absmethodid = jpamb.getmethodid(
-        "syntaxer",
+        "JK_Analyse",
         "1.0",
-        "The Rice Theorem Cookers",
+        "Joachim",
         ["syntactic", "python"],
         for_science=True,
     )
 
     log = logging
     log.basicConfig(level=logging.DEBUG)
+    log.debug(Path.cwd())
 
     suite, _ = jpamb.setup()
 
@@ -58,15 +59,15 @@ def main():
         assert_match_no= re.search(r"\bassert true", metode_indhold, re.MULTILINE)
         if assert_match_no:
             log.debug("No assertion")
-            print("assertion error;not-found-asssert")
+            print("assertion error;not-found")
         else:
             log.debug("Found assertion")
             print("assertion error;found-asssert")
     elif function_match:
-        print("assertion error;skip")
+        print("assertion error;0")
     else:
         log.debug("No assertion")
-        print("assertion error;not-found-asssert")
+        print("assertion error;not-found")
 
     divide_match = re.search(r"/\s*(?![1-9])([a-zA-Z0-9_\(])", metode_indhold, re.MULTILINE)
 
@@ -80,11 +81,11 @@ def main():
             log.debug("Found divide")
             print("divide by zero;found-div")
     elif function_match:
-        print("divide by zero;skip")
+        print("divide by zero;0")
 
     else:
         log.debug("No divide")
-        print("divide by zero;not-found-div")
+        print("divide by zero;not-found")
 
     null_match = re.search(r"null", metode_indhold, re.MULTILINE)
 
@@ -96,7 +97,7 @@ def main():
         print("null pointer;found-null")
     else:
         log.debug("No null pointer")
-        print("null pointer;not-found-null")
+        print("null pointer;not-found")
 
     oob_pattern = r"\b[a-zA-Z_][a-zA-Z0-9_]*\s*\[\s*(\d+|[a-zA-Z_][a-zA-Z0-9_]*)\s*\]|\bget\s*\(\s*(\d+|[a-zA-Z_][a-zA-Z0-9_]*)\s*\)"
 
@@ -136,12 +137,12 @@ def main():
             print("out of bounds;found-oob")
         else:
             log.debug("No out of bounds")
-            print("out of bounds;not-found-oob")
+            print("out of bounds;not-found")
     elif function_match:
-        print("out of bounds;skip")
+        print("out of bounds;0")
     else:
         log.debug("Intet array-indeks fundet")
-        print("out of bounds;not-found-oob")
+        print("out of bounds;not-found")
 
 
 
@@ -155,7 +156,7 @@ def main():
         log.debug("Found out of bounds")
         print("*;found-while")
     elif function_match:
-        print("*;skip")
+        print("*;0")
     else:
         log.debug("No out of bounds")
         print("*;-10")
