@@ -26,7 +26,9 @@ class Poset(ABC):
 
 def is_reflexive(a: Poset):
     # Checking if the relation is reflexive (a == a)
-    assert a == a, f"Reflexivity check failed: Element {a} is not related to itself."  # noqa: PLR0124
+    assert (
+        a == a
+    ), f"Reflexivity check failed: Element {a} is not related to itself."  # noqa: PLR0124
 
 
 def is_antisymmetric(a: Poset, b: Poset):
@@ -76,28 +78,28 @@ class Lattice(Poset):
 
 def is_lattice_identities(a: Lattice):
     # Top element identity checks
-    assert (a | a.top()) == a.top(), (
-        f"Top identity fail: ({a} | {a.top()}) -> {a | a.top()} != {a.top()}"
-    )
-    assert (a.top() | a) == a.top(), (
-        f"Top identity fail (commute): ({a.top()} | {a}) != {a.top()}"
-    )
+    assert (
+        a | a.top()
+    ) == a.top(), f"Top identity fail: ({a} | {a.top()}) -> {a | a.top()} != {a.top()}"
+    assert (
+        a.top() | a
+    ) == a.top(), f"Top identity fail (commute): ({a.top()} | {a}) != {a.top()}"
     assert (a & a.top()) == a, f"Top identity fail (meet): ({a} & {a.top()}) != {a}"
-    assert (a.top() & a) == a, (
-        f"Top identity fail (meet commute): ({a.top()} & {a}) != {a}"
-    )
+    assert (
+        a.top() & a
+    ) == a, f"Top identity fail (meet commute): ({a.top()} & {a}) != {a}"
 
     # Bottom element identity checks
-    assert (a & a.bot()) == a.bot(), (
-        f"Bottom identity fail: ({a} & {a.bot()}) != {a.bot()}"
-    )
-    assert (a.bot() & a) == a.bot(), (
-        f"Bottom identity fail (commute): ({a.bot()} & {a}) != {a.bot()}"
-    )
+    assert (
+        a & a.bot()
+    ) == a.bot(), f"Bottom identity fail: ({a} & {a.bot()}) != {a.bot()}"
+    assert (
+        a.bot() & a
+    ) == a.bot(), f"Bottom identity fail (commute): ({a.bot()} & {a}) != {a.bot()}"
     assert (a.bot() | a) == a, f"Bottom identity fail (join): ({a.bot()} | {a}) != {a}"
-    assert (a | a.bot()) == a, (
-        f"Bottom identity fail (join commute): ({a} | {a.bot()}) != {a}"
-    )
+    assert (
+        a | a.bot()
+    ) == a, f"Bottom identity fail (join commute): ({a} | {a.bot()}) != {a}"
 
 
 def is_lattice(a: Lattice, b: Lattice, c: Lattice):
@@ -153,9 +155,15 @@ def to_sign(value: jvms.StackValue) -> Sign:
             raise NotImplementedError(f"Unsupported value {value!r}")
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class SignSet(Abstraction, Lattice):
     signs: frozenset[Sign]
+
+    def __lt__(self, other: "SignSet") -> bool:
+        return self.signs < other.signs
+
+    def __gt__(self, other: "SignSet") -> bool:
+        return self.signs > other.signs
 
     def __str__(self):
         return f"{{{''.join(z for z, b in zip('-0+', [-1, 0, 1]) if b in self.signs)}}}"
@@ -193,9 +201,7 @@ class SignSet(Abstraction, Lattice):
 
         return SignSet(self.signs & other.signs)
 
-    def arithmetic(
-        self, other: "SignSet", opr: jvm.BinaryOpr
-    ) -> tuple["SignSet", set[str]]:
+    def arithmetic(self, other: "SignSet", opr: jvm.BinaryOpr) -> list["SignSet | str"]:
         match opr:
             case jvm.BinaryOpr.Add:
                 output = set()
@@ -212,8 +218,77 @@ class SignSet(Abstraction, Lattice):
                 if 0 in self.signs:
                     output.update(other.signs)
 
-                return (SignSet(output), set())
+                return [SignSet(output)] if output else []
+
+            case jvm.BinaryOpr.Sub:
+                output = set()
+
+                for x in self.signs:
+                    for y in other.signs:
+                        if x == 0 and y == 0:
+                            output.add(0)
+                            continue
+                        elif x == y:
+                            output.update([-1, 0, 1])
+                        elif x > y:
+                            output.add(1)
+                        else:
+                            output.add(-1)
+                return [SignSet(output)] if output else []
+
+            case jvm.BinaryOpr.Mul:
+                output = set()
+
+                for x in self.signs:
+                    for y in other.signs:
+                        if x == 0 or y == 0:
+                            output.add(0)
+                            continue
+                        elif (x == -1) != (y == -1):
+                            output.update([-1, 0, 1])
+                        else:
+                            output.update([-1, 0, 1])
+
+                return [SignSet(output)] if output else []
+
+            case jvm.BinaryOpr.Div:
+                output = set()
+                errors = set()
+
+                for numerator in self.signs:
+                    for denominator in other.signs:
+                        if denominator == 0:
+                            errors.add("divide by zero")
+                        elif numerator == 0:
+                            output.add(0)
+                        elif numerator == denominator:
+                            output.update([0, 1])
+                        else:
+                            output.update([0, -1])
+
+                results = [SignSet(output)] if output else []
+                return [*results, *sorted(errors)]
+
+            case jvm.BinaryOpr.Rem:
+                output = set()
+                errors = set()
+
+                for x in self.signs:
+                    for y in other.signs:
+                        if y == 0:
+                            errors.add("divide by zero")
+                        elif x == 0:
+                            output.add(0)
+                        elif x > 0:
+                            output.update([0, 1])
+                        else:
+                            output.update([-1, 0])
+
+                results = [SignSet(output)] if output else []
+                return [*results, *sorted(errors)]
+
             case _:
+                # print("look here", opr, file=sys.stderr)
                 raise NotImplementedError(f"TODO: {opr}")
 
     def compare(self, other: "SignSet", opr: jvm.CmpOpr) -> Iterable[bool]:
@@ -230,45 +305,139 @@ class SignSet(Abstraction, Lattice):
                         if x >= y:
                             cases.add(False)
                 return cases
+            case jvm.CmpOpr.Lt:
+                cases = set()
+
+                for x in self.signs:
+                    for y in other.signs:
+                        if x < y:
+                            cases.add(True)
+                        elif x > y:
+                            cases.add(False)
+                        elif x == 0 or y == 0:
+                            cases.add(False)
+                        else:
+                            cases.update([True, False])
+                return cases
+            case jvm.CmpOpr.Ge:
+                cases = set()
+
+                for x in self.signs:
+                    for y in other.signs:
+                        if x == 0 or y == 0:
+                            cases.add(x >= y)
+                            continue
+                        if x >= y:
+                            cases.add(True)
+                        if x <= y:
+                            cases.add(False)
+                return cases
+            case jvm.CmpOpr.Gt:
+                cases = set()
+
+                for x in self.signs:
+                    for y in other.signs:
+                        if x > y:
+                            cases.add(True)
+                        elif x < y:
+                            cases.add(False)
+                        elif x == 0 or y == 0:
+                            cases.add(False)
+                        else:
+                            cases.update([True, False])
+                return cases
+            case jvm.CmpOpr.Eq:
+                cases = set()
+                for x in self.signs:
+                    for y in other.signs:
+                        if x == 0 and y == 0:
+                            cases.add(True)
+                            continue
+                        if x == y:
+                            cases.update([True, False])
+                        if x != y:
+                            cases.add(False)
+                return cases
+            case jvm.CmpOpr.Ne:
+                cases = set()
+                for x in self.signs:
+                    for y in other.signs:
+                        if x != y:
+                            cases.add(True)
+                        elif x == 0 and y == 0:
+                            cases.add(False)
+                        else:
+                            cases.update([True, False])
+                return cases
             case _:
                 raise NotImplementedError(f"TODO: {opr}")
 
 
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Self
+INT_MIN = -(2**31)
+INT_MAX = (2**31) - 1
 
 
 @dataclass(frozen=True)
 class Interval(Abstraction, Lattice):
-    min: int | None
-    max: int | None
+    min: int
+    max: int
+
+    def is_bot(self) -> bool:
+        return self.min > self.max
 
     def __str__(self):
-        return f"{self.min if self.min is not None else '-inf'}:{self.max if self.max is not None else 'inf'}"
+        return "⊥" if self.is_bot() else f"[{self.min}, {self.max}]"
 
     def __sexpr__(self):
         return str(self)
 
     @classmethod
     def abstract(cls, values: Iterable[jvms.StackValue]) -> Self:
-        raise NotImplementedError("TODO")
+        nums = [v.value for v in values]
+
+        if not nums:
+            # The interval [1, 0] is empty as there is no numbers between min: 1 and max: 0
+            return cls(1, 0)
+        return cls(min(nums, max(nums)))
 
     def __contains__(self, value: jvms.StackValue) -> bool:
-        raise NotImplementedError("TODO")
+        # Checks if the value is in the interval
+        return self.min <= value.value <= self.max
 
     @classmethod
     def top(cls) -> Self:
-        raise NotImplementedError("TODO")
+        return cls(INT_MIN, INT_MAX)
 
     def __or__(self, other: "Interval") -> "Interval":
-        raise NotImplementedError("TODO")
+        if self.is_bot:
+            return other
+        elif other.is_bot:
+            return self
+        return Interval(min(self.min, other.min), max(self.max, other.max))
 
     def __and__(self, other: "Interval") -> "Interval":
-        raise NotImplementedError("TODO")
+        maxVal = max(self.max, other.max)
+        minVal = min(self.min, other.min)
+
+        if maxVal < minVal:
+            return Interval(1, 0)
+
+        return Interval(minVal, maxVal)
 
     def __lt__(self, other: "Interval") -> bool:
-        raise NotImplementedError("TODO")
+        if self == other:
+            return False
+        elif self.is_bot():
+            return Interval(1, 0)
+        elif self.is_bot():
+            return Interval(1, 0)
+        return other.min <= self.min and self.max <= other.max
 
     def __gt__(self, other: "Interval") -> bool:
-        raise NotImplementedError("TODO")
+        if self == other:
+            return False
+        elif self.is_bot():
+            return Interval(1, 0)
+        elif self.is_bot():
+            return Interval(1, 0)
+        return self.min <= other.min and other.max <= self.max
