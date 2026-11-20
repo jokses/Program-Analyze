@@ -1,4 +1,5 @@
-import abstractions as ab
+import absSigns as ab
+from tools import is_galoi, is_lattice, is_poset
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -35,17 +36,17 @@ def st_signset():
 
 @given(st_signset(), st_signset(), st_signset())
 def test_signset_is_poset(a: ab.SignSet, b: ab.SignSet, c: ab.SignSet):
-    ab.is_poset(a, b, c)
+    is_poset(a, b, c)
 
 
 @given(st_signset(), st_signset(), st_signset())
 def test_signset_is_lattice(a: ab.SignSet, b: ab.SignSet, c: ab.SignSet):
-    ab.is_lattice(a, b, c)
+    is_lattice(a, b, c)
 
 
 @given(st.sets(st_stack_ints()), st_signset())
 def test_signset_is_galoi(a: set[jvms.StackInt], b: ab.SignSet):
-    ab.is_galoi(a, b)
+    is_galoi(a, b)
 
 
 def arithmetic(opr, x, y):
@@ -139,37 +140,3 @@ def test_signset_compare(
     real = {compare(opr, x, y) for x in xs for y in ys}
     abstracted = set(ab.SignSet.abstract(xs).compare(ab.SignSet.abstract(ys), opr))
     assert real <= abstracted
-
-
-@st.composite
-def st_interval(draw):
-    if draw(st.booleans()):
-        max = None
-        if draw(st.booleans()):
-            min = None
-        else:
-            min = draw(st_i32())
-    elif draw(st.booleans()):
-        min = None
-        max = draw(st_i32())
-
-    min, max = sorted([draw(st_i32()), draw(st_i32())])
-    return ab.Interval(min, max)
-
-
-@pytest.mark.skip("todo")
-@given(st_interval(), st_interval(), st_interval())
-def test_interval_is_poset(a: ab.Interval, b: ab.Interval, c: ab.Interval):
-    ab.is_poset(a, b, c)
-
-
-@pytest.mark.skip("todo")
-@given(st_interval(), st_interval(), st_interval())
-def test_interval_is_lattice(a: ab.Interval, b: ab.Interval, c: ab.Interval):
-    ab.is_lattice(a, b, c)
-
-
-@pytest.mark.skip("todo")
-@given(st.sets(st_stack_ints()), st_interval())
-def test_lnterval_is_galoi(a: set[jvms.StackInt], b: ab.Interval):
-    ab.is_galoi(a, b)

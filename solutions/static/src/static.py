@@ -3,7 +3,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from abstractions import SignSet
+from absSigns import SignSet
 
 import jpamb
 import sexpr
