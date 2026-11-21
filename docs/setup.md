@@ -49,8 +49,10 @@ In short, it is a single step:
 ```bash
 # On Linux/Mac:
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 # On Windows (PowerShell):
+```bash
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 

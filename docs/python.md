@@ -17,7 +17,9 @@ Now activate the virtual environment:
 # Using bash (but look for other options) 
 $ source .jpamb-eval/bin/activate
 ```
-
+```bash
+$ .jpamb-eval\Scripts\Activate.ps1
+```
 After this you should see a `(jpamb-eval)` in your prompt.
 
 Now you can install both JPAMB and your python project in this new environment.

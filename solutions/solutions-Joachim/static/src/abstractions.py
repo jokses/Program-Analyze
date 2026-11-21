@@ -149,8 +149,6 @@ def to_sign(value: jvms.StackValue) -> Sign:
     match value:
         case jvms.StackInt(v):
             return (v > 0) - (v < 0)
-        # if v>0:
-        #     return '+'
         case a:
             raise NotImplementedError(f"Unsupported value {value!r}")
 
@@ -196,7 +194,7 @@ class SignSet(Abstraction, Lattice):
         return SignSet(self.signs & other.signs)
 
     def arithmetic(
-        self, other: "SignSet", opr: jvm.BinaryOpr
+            self, other: "SignSet", opr: jvm.BinaryOpr
     ) -> tuple["SignSet", set[str]]:
         match opr:
             case jvm.BinaryOpr.Add:
@@ -204,28 +202,29 @@ class SignSet(Abstraction, Lattice):
                 if 1 in self.signs:
                     output.add(1)
                     if -1 in other.signs:
-                        output.update([0, -1])
+                        output.update([1, 0, -1])
 
                 if -1 in self.signs:
                     output.add(-1)
                     if 1 in other.signs:
-                        output.update([0, 1])
+                        output.update([-1, 0, 1])
 
                 if 0 in self.signs:
                     output.update(other.signs)
 
-                return (SignSet(output), set())
+                return (SignSet(frozenset(output)), set()) # RETTET: Brug frozenset(output)
+
             case jvm.BinaryOpr.Sub:
                 output = set()
                 if 1 in self.signs:
                     output.add(1)
                     if 1 in other.signs:
-                        output.update([0, -1])
+                        output.update([-1, 0, 1])
 
                 if -1 in self.signs:
                     output.add(-1)
                     if -1 in other.signs:
-                        output.update([0, 1])
+                        output.update([-1, 0, 1])
 
                 if 0 in self.signs:
                     if -1 in other.signs:
@@ -235,78 +234,177 @@ class SignSet(Abstraction, Lattice):
                     if 0 in other.signs:
                         output.add(0)
 
-                return (SignSet(output), set())
+                # RETTET: Den returnerede før SignSet(frozenset()), hvilket tabte alle data!
+                return (SignSet(frozenset(output)), set())
+
             case jvm.BinaryOpr.Div:
                 output = set()
-
-                if 1 in self.signs:
-                    if 1 in other.signs:
-                        output.update([1])
-                    if -1 in other.signs:
-                        output.update([-1])
-                if -1 in self.signs:
-                    if -1 in other.signs:
-                        output.update([1])
-                    if 1 in other.signs:
-                        output.update([-1])
-                if 0 in self.signs:
-                    output.update([0])
-
                 if 0 in other.signs:
-                    return (SignSet(output), "divide by zero")
+                    # Hvis 0 er der, kan det give divide by zero
+                    # Men hvis der OGSÅ er andre tal (f.eks. {-1, 0, 1}), skal vi beregne de gyldige veje
+                    pass
 
-                return (SignSet(output), set())
+                if other.signs != {0}:
+                    if 1 in self.signs:
+                        if 1 in other.signs:
+                            output.update([0, 1]) # Heltalsdivision 1/2 = 0 i JVM
+                        if -1 in other.signs:
+                            output.update([0, -1])
+                    if -1 in self.signs:
+                        if -1 in other.signs:
+                            output.update([0, 1])
+                        if 1 in other.signs:
+                            output.update([0, -1])
+                    if 0 in self.signs:
+                        output.add(0)
+
+                error = {"divide by zero"} if 0 in other.signs else set()
+                return (SignSet(frozenset(output)), error)
+
+            case jvm.BinaryOpr.Mul:
+                output = set()
+                # Hvis 0 indgår i en af siderne, kan resultatet altid blive 0
+                if 0 in self.signs or 0 in other.signs:
+                    output.add(0)
+
+                # Positive kombinationer
+                if 1 in self.signs:
+                    if 1 in other.signs: output.add(1)
+                    if -1 in other.signs: output.add(-1)
+                # Negative kombinationer
+                if -1 in self.signs:
+                    if 1 in other.signs: output.add(-1)
+                    if -1 in other.signs: output.add(1)
+
+                return (SignSet(frozenset(output)), set())
+
+            case jvm.BinaryOpr.Rem: # n % i
+                output = set()
+                if 0 in other.signs:
+                    # Modulo med 0 kaster også arithmetic exception (divide by zero)
+                    return (SignSet(frozenset()), {"divide by zero"})
+
+                # Resultatet af rest-division i Java deler fortegn med tælleren (self) eller bliver 0
+                if 1 in self.signs or -1 in self.signs or 0 in self.signs:
+                    output.update([-1, 0, 1]) # Sound over-approksimering
+
+                error = {"divide by zero"} if 0 in other.signs else set()
+                return (SignSet(frozenset(output)), error)
+
             case _:
                 raise NotImplementedError(f"TODO: {opr}")
 
+
+    # def compare(self, other: "SignSet", opr: jvm.CmpOpr) -> Iterable[bool]:
+    #     match opr:
+    #         case jvm.CmpOpr.Gt: # self > other
+    #             cases = set()
+    #             for x in self.signs:
+    #                 for y in other.signs:
+    #                     # Evaluering af alle reelle kombinationer for >
+    #                     if x > y:
+    #                         cases.add(True)
+    #                     if x <= y:
+    #                         cases.add(False)
+    #             return cases
+    #
+    #         case jvm.CmpOpr.Le: # self <= other
+    #             cases = set()
+    #             for x in self.signs:
+    #                 for y in other.signs:
+    #                     if x <= y:
+    #                         cases.add(True)
+    #                     if x > y:
+    #                         cases.add(False)
+    #             return cases
+    #         case jvm.CmpOpr.Ge: # self <= other
+    #             cases = set()
+    #             for x in self.signs:
+    #                 for y in other.signs:
+    #                     if x >= y:
+    #                         cases.add(True)
+    #                     if x < y:
+    #                         cases.add(False)
+    #             return cases
+    #
+    #         case jvm.CmpOpr.Ne:
+    #             cases = set()
+    #
+    #
+    #             for x in self.signs:
+    #                 for y in other.signs:
+    #                     if x == 0 or y == 0:
+    #                         cases.add(x != y)
+    #                         continue
+    #                     if x != y:
+    #                         cases.add(True)
+    #                     else:
+    #                         cases.add(False)
+    #                         cases.add(True)
+    #             return cases
+    #         case jvm.CmpOpr.Eq:
+    #             cases = set()
+    #
+    #
+    #             for x in self.signs:
+    #                 for y in other.signs:
+    #                     if x == 0 or y == 0:
+    #                         cases.add(x == y)
+    #                         continue
+    #                     if x != y:
+    #                         cases.add(False)
+    #                     else:
+    #                         cases.add(False)
+    #                         cases.add(True)
+    #             return cases
+    #         case _:
+    #             raise NotImplementedError(f"TODO: {opr}")
+    #
     def compare(self, other: "SignSet", opr: jvm.CmpOpr) -> Iterable[bool]:
-        match opr:
-            case jvm.CmpOpr.Le:
-                cases = set()
-                for x in self.signs:
-                    for y in other.signs:
-                        if x == 0 or y == 0:
+        cases = set()
+        for x in self.signs:
+            for y in other.signs:
+                # Hvis vi sammenligner to tal med samme fortegn (f.eks. -1 og -1, eller 1 og 1),
+                # så ved vi ikke, hvad deres reelle forhold er, da det afhænger af de konkrete tal.
+                # De kan være lig med hinanden, eller det ene kan være større end det andet.
+                # Derfor er både True og False mulige for ALLE operatorer (undtagen 0)!
+                if x == y and x != 0:
+                    cases.add(True)
+                    cases.add(False)
+                    continue
+
+                # Hvis fortegnene er forskellige (f.eks. 1 og 0, eller -1 og 1),
+                # så kender vi det præcise matematiske forhold ud fra fortegnet alene:
+                match opr:
+                    case jvm.CmpOpr.Gt: # self > other
+                        cases.add(x > y)
+                    case jvm.CmpOpr.Ge: # self >= other
+                        cases.add(x >= y)
+                    case jvm.CmpOpr.Eq: # self == other
+                        cases.add(x == y)
+                    case jvm.CmpOpr.Ne: # self != other
+                        cases.add(x != y)
+                    case jvm.CmpOpr.Le: # self <= other
+                        cases.add(x <= y)
+                    case _:
+                        # Robust fallback der dækker både int, float og double operatorer (Lt, Le osv.)
+                        op_str = str(opr).lower()
+                        if "lt" in op_str:
+                            cases.add(x < y)
+                        elif "le" in op_str:
                             cases.add(x <= y)
-                            continue
-                        if x <= y:
-                            cases.add(True)
-                        if x >= y:
-                            cases.add(False)
-                return cases
-            case jvm.CmpOpr.Gt:
-
-                cases = set()
-                print(f" value ----  {cases}", file=sys.stderr)
-                for x in self.signs:
-                    for y in other.signs:
-                        if x == 0 or y == 0:
+                        elif "gt" in op_str:
                             cases.add(x > y)
-                            continue
-                        if x >= y:
-                            cases.add(True)
-                        if x <= y:
-                            cases.add(False)
-                return cases
-
-            case jvm.CmpOpr.Ne:
-                cases = set()
-
-
-                for x in self.signs:
-                    for y in other.signs:
-                        if x == 0 or y == 0:
-                            cases.add(x != y)
-                            continue
-                        if x != y:
-                            cases.add(True)
+                        elif "ge" in op_str:
+                            cases.add(x >= y)
                         else:
-                            cases.add(False)
+                            # I stedet for at crashe hele din 'analyse()' løkke med NotImplementedError,
+                            # returnerer vi soundly både True og False, så programmet kan overleve!
                             cases.add(True)
-                return cases
-            case _:
-                raise NotImplementedError(f"TODO: {opr}")
+                            cases.add(False)
 
 
+        return cases
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Self
