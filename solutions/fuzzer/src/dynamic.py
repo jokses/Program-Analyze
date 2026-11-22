@@ -6,6 +6,8 @@ import jpamb
 import jvm
 import jvm.state as jvmc
 
+DEBUG = False
+
 
 def binary(op, v1: int, v2: int) -> int | str:
     match op:
@@ -56,11 +58,13 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
     pc = frame.pc
     opr = bc[pc]
     output = state
-    print(f"Stepping {pc}:\n > {opr}", file=sys.stderr)
+    if DEBUG:
+        print(f"Stepping {pc}:\n > {opr}", file=sys.stderr)
     match opr:
 
         case jvm.Push(type=t, value=v):
-            print(f"---value   {t}: {t!r}", file=sys.stderr)
+            if DEBUG:
+                print(f"---value   {t}: {t!r}", file=sys.stderr)
             match t:
                 case jvm.Int():
                     frame.stack.push(jvmc.StackInt(v))
@@ -96,7 +100,8 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             frame.pc +=1
         case jvm.InvokeStatic(offset=off, method=method_id):
             target_method = bc.getmethod(method_id)
-            print(f" Kalder metode: {method_id.extension.name}", file=sys.stderr)
+            if DEBUG:
+                print(f" Kalder metode: {method_id.extension.name}", file=sys.stderr)
 
             # VI LADER frame.pc BLIVE PÅ DET AKTUELLE OFFSET (off)
             # Så frameworket kan se det præcise invoke-punkt (:1) under hele forløbet!
@@ -118,7 +123,8 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
         case jvm.NewArray(offset=off, type=t, dim=d):
 
             count = frame.stack.pop().value
-            print(f" value ----  {t} {count}", file=sys.stderr)
+            if DEBUG:
+                print(f" value ----  {t} {count}", file=sys.stderr)
             match t:
                 case jvm.Int():
                     heap_array_obj = jvm.state.HeapArray(contains=t, values=[0] * count)
@@ -167,7 +173,11 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             classname_str = method_id.classname.dotted()
             method_name = method_id.extension.name
 
-            print(f" Kalder virtuel metode: {classname_str}.{method_name}", file=sys.stderr)
+            if DEBUG:
+                print(
+                    f" Kalder virtuel metode: {classname_str}.{method_name}",
+                    file=sys.stderr,
+                )
 
             # 2. Hent antallet af parametre
             num_params = len(method_id.extension.params._elements)
