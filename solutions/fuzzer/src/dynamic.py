@@ -1,7 +1,10 @@
 import bisect
+import functools
 import random
 import sys
 from dataclasses import dataclass, field
+
+from syntactic_constants import constants_for_method_id
 
 import jpamb
 import jvm
@@ -653,6 +656,13 @@ class Trace:
     ranges: frozenset[tuple[jvmc.PC, int, int, int]] = frozenset()
 
 
+# A site is split at the comparisons in its own method. The cache is there because
+# syntactic_constants reads the Java source every time.
+@functools.cache
+def comparisons_in_method(methodid: jvm.AbsMethodID) -> frozenset[int]:
+    return constants_for_method_id(methodid.encode(), follow_calls=False).comparisons
+
+
 # A point is a range of its own and the values between two points are one range.
 # For a constant c, "three" uses c as a point and "boundary" uses c-1, c and c+1.
 def split_points(constants: set[int], split: str) -> list[int]:
@@ -713,9 +723,7 @@ def run(
         if split is not None:
             method = frame.pc.method
             if method not in points:
-                points[method] = split_points(
-                    ints_in_method(bc.getmethod(method)), split
-                )
+                points[method] = split_points(set(comparisons_in_method(method)), split)
             # The operands are read before step pops them.
             for position, operand in enumerate(operands(bc[frame.pc], frame.stack)):
                 # Reference comparisons like if_acmpeq have no int range.
