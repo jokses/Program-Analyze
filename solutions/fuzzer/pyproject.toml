@@ -15,6 +15,7 @@ dependencies = [
 fuzzer-interpreter = "dynamic:interpret"
 fuzzer-analysis = "dynamic:analyse"
 fuzzer = "fuzzer:main"
+fuzzer-checks = "checks:main"
 
 [tool.uv.sources]
 jpamb = { path = "../../", editable = true }
