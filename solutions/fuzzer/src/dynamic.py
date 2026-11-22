@@ -603,6 +603,47 @@ def fuzz_type(draw: Draw, target: jvm.Type) -> jpamb.case.Value:
             raise NotImplementedError(f"{a!r}")
 
 
+# Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.2
+def ints_in_method(method: jvm.Method) -> set[int]:
+    ints = set()
+    for opcode in method.opcodes:
+        match opcode:
+            case jvm.Push(type=jvm.Int(), value=value):
+                ints.add(value)
+            case jvm.Incr(amount=amount):
+                ints.add(amount)
+    return ints
+
+
+def strings_in_method(method: jvm.Method) -> list[str]:
+    return [
+        opcode.value
+        for opcode in method.opcodes
+        if isinstance(opcode, jvm.Push) and isinstance(opcode.value, str)
+    ]
+
+
+# fuzz_type reads these bytes as the constant in every parameter.
+def constant_code(params: list[jvm.Type], constant: int | str) -> bytes:
+    number = constant if isinstance(constant, int) else 0
+    if isinstance(constant, str):
+        text = bytes(ord(char) % 256 for char in constant[:MAX_FUZZ_LENGTH])
+    else:
+        text = bytes([constant]) if 0 <= constant < 256 else b""
+    code = b""
+    for param in params:
+        match param:
+            case jvm.Int():
+                code += number.to_bytes(4, signed=True)
+            case jvm.Boolean():
+                code += bytes([1 if number else 0])
+            case jvm.Array(contains=jvm.Int()):
+                code += bytes([1]) + number.to_bytes(4, signed=True)
+            case _:
+                code += bytes([len(text)]) + text
+    return code
+
+
 @dataclass(frozen=True)
 class Trace:
     outcome: str
