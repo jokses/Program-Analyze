@@ -11,7 +11,7 @@ import dynamic
 import jpamb
 import jvm
 
-VERSIONS = ["random"]
+VERSIONS = ["random", "instruction"]
 
 MAX_RUNS = 100_000
 MAX_RUNS_SINCE_NEW = 1_000
@@ -53,9 +53,15 @@ def fuzz(
     start = time.process_time()
     while True:
         if first_codes:
-            input = corpus.fuzz_input(first_codes.pop(0))
+            code = first_codes.pop(0)
+        elif version == "random":
+            code = None
         else:
+            code = corpus.next()
+        if code is None:
             input = dynamic.fuzz_input(rand, methodid)
+        else:
+            input = corpus.fuzz_input(code)
 
         trace = dynamic.run(bc, methodid, input, max_steps=MAX_STEPS)
         runs += 1
@@ -65,8 +71,13 @@ def fuzz(
         else:
             runs_since_new = 0
             instructions |= trace.instructions
+        if version != "random" and code is not None:
+            corpus.add(code, trace.instructions)
 
-        if runs_since_new >= MAX_RUNS_SINCE_NEW:
+        covered = {pc.offset for pc in instructions if pc.method == methodid}
+        if version == "instruction" and len(covered) == len(method.opcodes):
+            reason = "full instruction coverage"
+        elif runs_since_new >= MAX_RUNS_SINCE_NEW:
             reason = "no new coverage"
         elif runs >= MAX_RUNS:
             reason = "max runs"
@@ -83,6 +94,9 @@ def fuzz(
             runs_since_new=runs_since_new,
             outcomes=tuple(sorted(outcomes)),
             instructions=tuple(sorted(pc.encode() for pc in instructions)),
+            kept_inputs=tuple(
+                corpus.fuzz_input(c).encode() for c in corpus.interesting
+            ),
         )
 
 
