@@ -7,6 +7,8 @@ import jvm.state as jvmc
 
 DEBUG = False
 
+MAX_ARRAY_SIZE = 1_000_000
+
 
 # Java ints wrap around, like 2147483647 + 1 == -2147483648.
 def to_int(value: int) -> int:
@@ -126,6 +128,13 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             count = frame.stack.pop().value
             if DEBUG:
                 print(f" value ----  {t} {count}", file=sys.stderr)
+
+            # JPAMB has no outcome for NegativeArraySizeException.
+            if count < 0:
+                return pc, "negative array size"
+            # A large random size would use up the memory.
+            if count > MAX_ARRAY_SIZE:
+                return pc, "out of memory"
             match t:
                 case jvm.Int():
                     heap_array_obj = jvm.state.HeapArray(contains=t, values=[0] * count)
