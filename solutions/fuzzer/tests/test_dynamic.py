@@ -1,7 +1,7 @@
-import jvm
 import pytest
+from dynamic import binary, range_of, split_points
 
-from dynamic import binary
+import jvm
 
 INT_MIN = -(2**31)
 INT_MAX = 2**31 - 1
@@ -19,3 +19,20 @@ INT_MAX = 2**31 - 1
 )
 def test_binary_follows_java(operator, left, right, expected):
     assert binary(operator, left, right) == expected
+
+
+@pytest.mark.parametrize(
+    "split, value, expected",
+    [
+        ("three", 32, (32, 32)),
+        ("three", 31, (1, 31)),
+        ("three", 33, (33, INT_MAX)),
+        ("three", -5, (INT_MIN, -1)),
+        ("boundary", 31, (31, 31)),
+        ("boundary", 30, (2, 30)),
+        ("boundary", 34, (34, INT_MAX)),
+        ("boundary", -1, (-1, -1)),
+    ],
+)
+def test_range_of_splits_at_the_constants(split, value, expected):
+    assert range_of(value, split_points({32}, split)) == expected

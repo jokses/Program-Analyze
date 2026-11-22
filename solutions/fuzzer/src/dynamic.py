@@ -1,3 +1,4 @@
+import bisect
 import random
 import sys
 from dataclasses import dataclass, field
@@ -648,6 +649,51 @@ def constant_code(params: list[jvm.Type], constant: int | str) -> bytes:
 class Trace:
     outcome: str
     instructions: frozenset[jvmc.PC]
+    # (pc, operand, low, high) means the operand at pc was in [low, high].
+    ranges: frozenset[tuple[jvmc.PC, int, int, int]] = frozenset()
+
+
+# A point is a range of its own and the values between two points are one range.
+# For a constant c, "three" uses c as a point and "boundary" uses c-1, c and c+1.
+def split_points(constants: set[int], split: str) -> list[int]:
+    # Source: https://courses.compute.dtu.dk/02242/topics/unbounded-static-analysis.html#sec:2.3
+    points = set()
+    for constant in constants | {0}:
+        match split:
+            case "three":
+                points.add(constant)
+            case "boundary":
+                points.update({constant - 1, constant, constant + 1})
+            case a:
+                raise NotImplementedError(f"{a!r}")
+    return sorted(point for point in points if -(2**31) <= point < 2**31)
+
+
+def range_of(value: int, points: list[int]) -> tuple[int, int]:
+    index = bisect.bisect_left(points, value)
+    if index < len(points) and points[index] == value:
+        return (value, value)
+    low = points[index - 1] + 1 if index > 0 else -(2**31)
+    high = points[index] - 1 if index < len(points) else 2**31 - 1
+    return (low, high)
+
+
+# The operands we record a range for.
+def operands(opcode: jvm.Opcode, stack: jvmc.OperandStack) -> list[jvmc.StackValue]:
+    values = stack.operands
+    match opcode:
+        case jvm.If() | jvm.Binary(operant=jvm.BinaryOpr.Div | jvm.BinaryOpr.Rem):
+            return [values[-2], values[-1]]
+        case jvm.Ifz():
+            return [values[-1]]
+        case jvm.ArrayLoad():
+            # The stack is array, index.
+            return [values[-1]]
+        case jvm.ArrayStore():
+            # The stack is array, index, value.
+            return [values[-2]]
+        case _:
+            return []
 
 
 def run(
@@ -656,15 +702,31 @@ def run(
     input: jpamb.case.Input,
     *,
     max_steps: int,
+    split: str | None = None,
 ) -> Trace:
     state = initial(bc, methodid, input)
     instructions = set()
+    ranges = set()
+    points = {}
     for _ in range(max_steps):
+        frame = state.frames.peek()
+        if split is not None:
+            method = frame.pc.method
+            if method not in points:
+                points[method] = split_points(
+                    ints_in_method(bc.getmethod(method)), split
+                )
+            # The operands are read before step pops them.
+            for position, operand in enumerate(operands(bc[frame.pc], frame.stack)):
+                # Reference comparisons like if_acmpeq have no int range.
+                if isinstance(operand, jvmc.StackInt):
+                    low, high = range_of(operand.value, points[method])
+                    ranges.add((frame.pc, position, low, high))
         pc, state = step(bc, state)
         instructions.add(pc)
         if isinstance(state, str):
-            return Trace(state, frozenset(instructions))
-    return Trace("*", frozenset(instructions))
+            return Trace(state, frozenset(instructions), frozenset(ranges))
+    return Trace("*", frozenset(instructions), frozenset(ranges))
 
 
 # Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.3

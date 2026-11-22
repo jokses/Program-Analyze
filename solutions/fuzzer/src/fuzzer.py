@@ -24,18 +24,25 @@ class Result:
     method: str
     version: str
     seed: int
+    split: str = ""
     runs: int = 0
     cpu_seconds: float = 0.0
     stop_reason: str = ""
     runs_since_new: int = 0
     outcomes: tuple[str, ...] = ()
     instructions: tuple[str, ...] = ()
+    ranges: tuple[tuple[str, int, int, int], ...] = ()
     kept_inputs: tuple[str, ...] = ()
     error: str | None = None
 
 
 def fuzz(
-    bc: jpamb.Bytecode, methodid: jvm.AbsMethodID, *, version: str, seed: int
+    bc: jpamb.Bytecode,
+    methodid: jvm.AbsMethodID,
+    *,
+    version: str,
+    seed: int,
+    split: str,
 ) -> Result:
     # The same method, version and seed give the same inputs.
     rand = random.Random(f"{methodid.encode()}|{version}|{seed}")
@@ -47,6 +54,7 @@ def fuzz(
     first_codes = [b""] + [dynamic.constant_code(params, c) for c in constants]
 
     instructions = set()
+    ranges = set()
     outcomes = set()
     runs = 0
     runs_since_new = 0
@@ -63,9 +71,10 @@ def fuzz(
         else:
             input = corpus.fuzz_input(code)
 
-        trace = dynamic.run(bc, methodid, input, max_steps=MAX_STEPS)
+        trace = dynamic.run(bc, methodid, input, max_steps=MAX_STEPS, split=split)
         runs += 1
         outcomes.add(trace.outcome)
+        ranges |= trace.ranges
         if trace.instructions <= instructions:
             runs_since_new += 1
         else:
@@ -88,12 +97,14 @@ def fuzz(
             method=methodid.encode(),
             version=version,
             seed=seed,
+            split=split,
             runs=runs,
             cpu_seconds=round(time.process_time() - start, 3),
             stop_reason=reason,
             runs_since_new=runs_since_new,
             outcomes=tuple(sorted(outcomes)),
             instructions=tuple(sorted(pc.encode() for pc in instructions)),
+            ranges=tuple(sorted((pc.encode(), *rest) for pc, *rest in ranges)),
             kept_inputs=tuple(
                 corpus.fuzz_input(c).encode() for c in corpus.interesting
             ),
@@ -115,6 +126,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="every method in cases.txt")
     parser.add_argument("--versions", default=",".join(VERSIONS))
     parser.add_argument("--seeds", type=int, default=10)
+    parser.add_argument("--split", choices=["three", "boundary"], default="three")
     parser.add_argument("--out", help="the JSON lines file, instead of stdout")
     args = parser.parse_args()
 
@@ -130,13 +142,16 @@ def main():
             for version in args.versions.split(","):
                 for seed in range(args.seeds):
                     try:
-                        result = fuzz(bc, methodid, version=version, seed=seed)
+                        result = fuzz(
+                            bc, methodid, version=version, seed=seed, split=args.split
+                        )
                     except Exception as e:  # ruff: ignore[BLE001]
                         # The interpreter and fuzz_input raise on what they do not support.
                         result = Result(
                             methodid.encode(),
                             version,
                             seed,
+                            split=args.split,
                             stop_reason="crash",
                             error=repr(e),
                         )
