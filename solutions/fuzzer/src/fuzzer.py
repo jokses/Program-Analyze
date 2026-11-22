@@ -11,12 +11,18 @@ import dynamic
 import jpamb
 import jvm
 
-VERSIONS = ["random", "instruction"]
+VERSIONS = ["random", "instruction", "range"]
 
 MAX_RUNS = 100_000
 MAX_RUNS_SINCE_NEW = 1_000
 # A run with more steps than this has the outcome "*".
 MAX_STEPS = 1_000
+
+
+# The ranges the interval analysis can reach, in the format of Trace.ranges.
+# None means we have no analysis yet.
+def bound(methodid: jvm.AbsMethodID) -> set | None:
+    return None
 
 
 @dataclass(frozen=True)
@@ -53,8 +59,10 @@ def fuzz(
     constants += dynamic.strings_in_method(method)
     first_codes = [b""] + [dynamic.constant_code(params, c) for c in constants]
 
+    method_bound = bound(methodid)
     instructions = set()
     ranges = set()
+    seen = set()
     outcomes = set()
     runs = 0
     runs_since_new = 0
@@ -74,18 +82,25 @@ def fuzz(
         trace = dynamic.run(bc, methodid, input, max_steps=MAX_STEPS, split=split)
         runs += 1
         outcomes.add(trace.outcome)
+        instructions |= trace.instructions
         ranges |= trace.ranges
-        if trace.instructions <= instructions:
+        if version == "instruction":
+            coverage = trace.instructions
+        else:
+            coverage = trace.instructions | trace.ranges
+        if coverage <= seen:
             runs_since_new += 1
         else:
             runs_since_new = 0
-            instructions |= trace.instructions
+            seen |= coverage
         if version != "random" and code is not None:
-            corpus.add(code, trace.instructions)
+            corpus.add(code, coverage)
 
         covered = {pc.offset for pc in instructions if pc.method == methodid}
         if version == "instruction" and len(covered) == len(method.opcodes):
             reason = "full instruction coverage"
+        elif version == "range" and method_bound is not None and method_bound <= ranges:
+            reason = "ranges meet the bound"
         elif runs_since_new >= MAX_RUNS_SINCE_NEW:
             reason = "no new coverage"
         elif runs >= MAX_RUNS:
