@@ -1,6 +1,6 @@
 import random
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import jpamb
 import jvm
@@ -601,6 +601,60 @@ def fuzz_type(draw: Draw, target: jvm.Type) -> jpamb.case.Value:
             )
         case a:
             raise NotImplementedError(f"{a!r}")
+
+
+@dataclass(frozen=True)
+class Trace:
+    outcome: str
+    instructions: frozenset[jvmc.PC]
+
+
+def run(
+    bc: jpamb.Bytecode,
+    methodid: jvm.AbsMethodID,
+    input: jpamb.case.Input,
+    *,
+    max_steps: int,
+) -> Trace:
+    state = initial(bc, methodid, input)
+    instructions = set()
+    for _ in range(max_steps):
+        pc, state = step(bc, state)
+        instructions.add(pc)
+        if isinstance(state, str):
+            return Trace(state, frozenset(instructions))
+    return Trace("*", frozenset(instructions))
+
+
+# Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.3
+@dataclass
+class Corpus:
+    params: list[jvm.Type]
+    rand: random.Random
+    interesting: list[bytes] = field(default_factory=list)
+    coverage: set = field(default_factory=set)
+
+    def fuzz_input(self, code: bytes) -> jpamb.case.Input:
+        draw = Draw(code)
+        return jpamb.case.Input(tuple(fuzz_type(draw, param) for param in self.params))
+
+    def next(self) -> bytes:
+        code = bytearray(self.rand.choice(self.interesting))
+        match self.rand.randrange(3):
+            case 0 if code:
+                code[self.rand.randrange(len(code))] = self.rand.randrange(256)
+            case 1 if code:
+                del code[self.rand.randrange(len(code))]
+            case _:
+                code.append(self.rand.randrange(256))
+        return bytes(code)
+
+    def add(self, code: bytes, coverage: set) -> bool:
+        if coverage <= self.coverage:
+            return False
+        self.coverage |= coverage
+        self.interesting.append(code)
+        return True
 
 
 def analyse():
