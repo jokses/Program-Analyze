@@ -1,6 +1,5 @@
 import random
 import sys
-from wsgiref.validate import assert_
 
 import jpamb
 import jvm
@@ -9,27 +8,31 @@ import jvm.state as jvmc
 DEBUG = False
 
 
+# Java ints wrap around, like 2147483647 + 1 == -2147483648.
+def to_int(value: int) -> int:
+    return (value + 2**31) % 2**32 - 2**31
+
+
 def binary(op, v1: int, v2: int) -> int | str:
     match op:
         case jvm.BinaryOpr.Div:
-            try:
-                return v1 // v2
-            except ZeroDivisionError:
+            if v2 == 0:
                 return "divide by zero"
-        case jvm.BinaryOpr.Rem:  # Tjek om dit enum-felt hedder Rem eller Mod
-            try:
-                # Java's % opfører sig som Python's math.fmod, men for heltal
-                # skal du blot passe på fortegnet (v1 % v2 i Python kan afvige ved negative tal,
-                # men i Collatz-testen arbejder du med positive tal, så % virker perfekt)
-                return int(v1 % v2) if v1 >= 0 else int(math.fmod(v1, v2))
-            except ZeroDivisionError:
+            # Java rounds toward zero and Python's // rounds down.
+            quotient = abs(v1) // abs(v2)
+            return to_int(quotient if (v1 < 0) == (v2 < 0) else -quotient)
+        case jvm.BinaryOpr.Rem:
+            if v2 == 0:
                 return "divide by zero"
+            # The remainder has the sign of v1, like -7 % 2 == -1 in Java.
+            remainder = abs(v1) % abs(v2)
+            return remainder if v1 >= 0 else -remainder
         case jvm.BinaryOpr.Sub:
-            return v1 - v2
+            return to_int(v1 - v2)
         case jvm.BinaryOpr.Mul:
-            return v1 * v2
+            return to_int(v1 * v2)
         case jvm.BinaryOpr.Add:
-            return v1 + v2
+            return to_int(v1 + v2)
         case a:
             raise NotImplementedError(f"Unhandled binary {op!r}")
 
@@ -232,7 +235,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
             # 2. Beregn den aritmetiske negation (-værdien)
             raw_value = value_element.value
-            negated_result = -raw_value
+            negated_result = to_int(-raw_value)
 
             match t:
                 case jvm.Int():
@@ -288,7 +291,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             current_value = current_local.value
 
             # 2. Læg instruktionens 'amount' (amt) til værdien
-            new_value = current_value + amt
+            new_value = to_int(current_value + amt)
 
             # 3. Pak det rå resultat ind i en ny StackInt og gem det tilbage i locals
             frame.locals[idx] = jvm.state.StackInt(value=new_value)

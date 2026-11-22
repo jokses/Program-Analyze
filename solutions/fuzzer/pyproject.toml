@@ -17,3 +17,8 @@ fuzzer-analysis = "dynamic:analyse"
 
 [tool.uv.sources]
 jpamb = { path = "../../", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
