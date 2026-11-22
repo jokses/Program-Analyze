@@ -103,9 +103,6 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             if DEBUG:
                 print(f" Kalder metode: {method_id.extension.name}", file=sys.stderr)
 
-            # VI LADER frame.pc BLIVE PÅ DET AKTUELLE OFFSET (off)
-            # Så frameworket kan se det præcise invoke-punkt (:1) under hele forløbet!
-
             new_frame = jvmc.Frame.from_method(target_method)
             num_params = len(method_id.extension.params._elements)
 
@@ -117,8 +114,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             for i, arg_val in enumerate(args):
                 new_frame.locals[i] = arg_val
 
+            # The caller continues after the call when the new frame returns.
+            frame.pc += 1
             state.frames.push(new_frame)
-            return new_frame.pc, state
 
         case jvm.NewArray(offset=off, type=t, dim=d):
 
@@ -145,25 +143,11 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             try:
                 heap_array = state.heap[ref_element]
             except IndexError:
-                return frame.pc, "null pointer"
+                return pc, "null pointer"
 
             # Tjek grænser (Bounds checking)
             if not (0 <= raw_index < len(heap_array.values)):
-                # 1. Pop den crashede ramme (generatePrimeArray) af din CallStack, ligesom i jvm.Throw!
-                state.frames.pop()
-
-                # 2. Hvis der er en forrige ramme (allPrimesArePositive), genoptager vi den
-                if state.frames:
-                    previous_frame = state.frames.peek()
-
-                    # Hvis din InvokeStatic ikke fik den flyttet permanent i frameworkets øjne,
-                    # så tvinger vi den op på offset 2 lige her under crashet!
-                    if previous_frame.pc.offset == 1:
-                        previous_frame.pc += 1
-
-                    return previous_frame.pc, "out of bounds"
-
-                return frame.pc, "out of bounds"
+                return pc, "out of bounds"
 
             heap_array.values[raw_index] = raw_value
             frame.pc += 1
@@ -223,7 +207,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 # Da vi kørte strengmetoden som et hack uden at pushe en ny frame,
                 # rykker vi blot den nuværende PC én frem og fortsætter!
                 frame.pc += 1
-                return frame.pc, state
+                return pc, state
 
             # --- NORMAL VELKENDT METODE (Hvis metoden findes i din egen bytecode-fil) ---
             target_method = bc.getmethod(method_id)
@@ -240,7 +224,6 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             frame.pc += 1
 
             state.frames.push(new_frame)
-            return new_frame.pc, state
 
         case jvm.Negate(offset=off, type=t):
             # 1. Pop værdien der skal negeres fra operand-stacken
@@ -267,7 +250,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             try:
                 heap_array = state.heap[ref_element]
             except IndexError:
-                return frame.pc, "null pointer"
+                return pc, "null pointer"
 
             length = len(heap_array.values)
             frame.stack.push(jvm.state.StackInt(value=length))
@@ -282,20 +265,10 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             try:
                 heap_array = state.heap[ref_element]
             except IndexError:
-                state.frames.pop()
-                if state.frames:
-                    previous_frame = state.frames.peek()
-                    previous_frame.pc += 1
-                    return previous_frame.pc, "null pointer"
-                return frame.pc, "null pointer"
+                return pc, "null pointer"
 
             if not (0 <= raw_index < len(heap_array.values)):
-                state.frames.pop()
-                if state.frames:
-                    previous_frame = state.frames.peek()
-                    previous_frame.pc += 1  # Flyt PC frem for at dække kaldet ved fejl
-                    return previous_frame.pc, "out of bounds"
-                return frame.pc, "out of bounds"
+                return pc, "out of bounds"
 
             raw_value = heap_array.values[raw_index]
 
@@ -372,24 +345,20 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 if len(state.frames.frames) == 1:
                     frame.stack.push(v1)
                     # Forhindrer IndexError i den absolut sidste returnering
-                    return frame.pc, "ok"
+                    return pc, "ok"
                 else:
                     # Intern returnering (f.eks. fra generatePrimeArray tilbage til allPrimesArePositive)
                     state.frames.pop()
                     previous_frame = state.frames.peek()
                     previous_frame.stack.push(v1)
-
-                    # FJERNET: previous_frame.pc += 1
-                    # Siden InvokeStatic allerede flyttede den til :2, skal vi IKKE øge den mere her!
-                    return previous_frame.pc, state
+                    return pc, state
             else:
                 # For void-metoder
                 if len(state.frames.frames) == 1:
-                    return frame.pc, "ok"
+                    return pc, "ok"
                 else:
                     state.frames.pop()
-                    previous_frame = state.frames.peek()
-                    return previous_frame.pc, state
+                    return pc, state
 
         case jvm.If(offset=off, condition=cond, target=targ):
             value2 = frame.stack.pop()  # Højre side (f.eks. array.length)
@@ -449,18 +418,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
         case jvm.Throw(offset=off):
             error_ref = frame.stack.pop()
-
-            # Fjern den crashede ramme (generatePrimeArray)
-            state.frames.pop()
-
-            if state.frames:
-                # Nu kigger vi på allPrimesArePositive rammen
-                previous_frame = state.frames.peek()
-                # Vi lader previous_frame.pc blive stående på invoke-punktet,
-                # så evaluatoren kan registrere at punktet blev dækket under crashet!
-                return previous_frame.pc, "assertion error"
-            else:
-                return frame.pc, "assertion error"
+            return pc, "assertion error"
 
         case jvm.New(offset=off) as new_opr:
             # Ved at bruge 'as new_opr' er vi 100% sikre på at ramme den rigtige instans
