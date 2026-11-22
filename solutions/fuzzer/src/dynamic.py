@@ -9,6 +9,8 @@ DEBUG = False
 
 MAX_ARRAY_SIZE = 1_000_000
 
+MAX_FUZZ_LENGTH = 8
+
 
 # Java ints wrap around, like 2147483647 + 1 == -2147483648.
 def to_int(value: int) -> int:
@@ -510,9 +512,20 @@ def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Inp
     for p in methodid.extension.params:
         match p:
             case jvm.Int():
-                input.append(jpamb.case.Int(rand.randint(-(1 << 31), 1 << 31)))
+                input.append(jpamb.case.Int(rand.randint(-(1 << 31), (1 << 31) - 1)))
             case jvm.Boolean():
                 input.append(jpamb.case.Boolean(1 == rand.randint(0, 1)))
+            # Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.1
+            case jvm.Array(contains=jvm.Int()):
+                length = rand.randint(0, MAX_FUZZ_LENGTH)
+                values = [
+                    rand.randint(-(1 << 31), (1 << 31) - 1) for _ in range(length)
+                ]
+                input.append(jpamb.case.Array(jvm.Int(), tuple(values)))
+            case jvm.Array(contains=jvm.Char()):
+                length = rand.randint(0, MAX_FUZZ_LENGTH)
+                values = rand.choices("abcdefghijklmnopqrstuvwxyz", k=length)
+                input.append(jpamb.case.Array(jvm.Char(), tuple(values)))
             # Inde i din fuzz_input funktion, hvor du genererer værdier til java.lang.String:
             case jvm.Object(classname) if classname.dotted() == "java.lang.String":
                 # 1. Generer den tilfældige rå streng
