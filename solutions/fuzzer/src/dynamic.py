@@ -1,5 +1,6 @@
 import random
 import sys
+from dataclasses import dataclass
 
 import jpamb
 import jvm
@@ -560,6 +561,46 @@ def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Inp
                 )
 
     return jpamb.case.Input(input)
+
+
+# Source: https://github.com/kalhauge/jpamb/commit/7a7a36af695aae8638be4983e291d456d4eff277
+@dataclass
+class Draw:
+    code: bytes
+    offset: int = 0
+
+    def next_byte(self) -> int:
+        value = self.code[self.offset] if self.offset < len(self.code) else 0
+        self.offset += 1
+        return value
+
+    def next_32bit_signed_int(self) -> int:
+        value = int.from_bytes(self.code[self.offset : self.offset + 4], signed=True)
+        self.offset += 4
+        return value
+
+
+def fuzz_type(draw: Draw, target: jvm.Type) -> jpamb.case.Value:
+    match target:
+        case jvm.Int():
+            return jpamb.case.Int(draw.next_32bit_signed_int())
+        case jvm.Boolean():
+            return jpamb.case.Boolean(draw.next_byte() % 2 == 1)
+        case jvm.Array(contains=jvm.Int()):
+            length = draw.next_byte() % (MAX_FUZZ_LENGTH + 1)
+            values = tuple(draw.next_32bit_signed_int() for _ in range(length))
+            return jpamb.case.Array(jvm.Int(), values)
+        case jvm.Array(contains=jvm.Char()):
+            length = draw.next_byte() % (MAX_FUZZ_LENGTH + 1)
+            values = tuple(chr(draw.next_byte()) for _ in range(length))
+            return jpamb.case.Array(jvm.Char(), values)
+        case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+            length = draw.next_byte() % (MAX_FUZZ_LENGTH + 1)
+            return jpamb.case.String(
+                "".join(chr(draw.next_byte()) for _ in range(length))
+            )
+        case a:
+            raise NotImplementedError(f"{a!r}")
 
 
 def analyse():

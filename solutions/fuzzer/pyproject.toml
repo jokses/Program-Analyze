@@ -20,5 +20,6 @@ jpamb = { path = "../../", editable = true }
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.168.0",
     "pytest>=9.1.1",
 ]
