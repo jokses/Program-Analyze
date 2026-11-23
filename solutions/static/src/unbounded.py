@@ -22,6 +22,7 @@ from jvm.state import PC
 INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
 INT_TYPES = {"int", "i", "boolean", "z", "char", "c", "short", "s", "byte", "b"}
+ALL_OUTCOMES = {"ok", "assertion error", "divide by zero", "null pointer", "out of bounds"}
 
 
 class AnalysisError(Exception):
@@ -175,46 +176,70 @@ class Interval(Abstraction, Lattice):
                     result.append(wrap_or_top(lo, hi))
                 return result
 
-            case jvm.BinaryOpr.And:
-                if min1 >= 0 and min2 >= 0:
-                    return [Interval(0, min(max1, max2))]
-                if other.single and min2 >= 0:
-                    return [Interval(0, min2)]
-                if self.single and min1 >= 0:
-                    return [Interval(0, min1)]
+            case _:
                 return [Interval.top()]
 
-            case jvm.BinaryOpr.Or:
+    def bitwise(self, other: "Interval", opr: jvm.BitOpr) -> "Interval":
+        if self.is_bot() or other.is_bot():
+            return Interval.bot()
+
+        min1, max1 = self.min, self.max
+        min2, max2 = other.min, other.max
+
+        match opr:
+            case jvm.BitOpr.And:
+                if min1 >= 0 and min2 >= 0:
+                    return Interval(0, min(max1, max2))
+                if other.single and min2 >= 0:
+                    return Interval(0, min2)
+                if self.single and min1 >= 0:
+                    return Interval(0, min1)
+                return Interval.top()
+
+            case jvm.BitOpr.Or:
                 if min1 >= 0 and min2 >= 0:
                     max_val = max(max1, max2)
                     upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
-                    return [Interval(max(min1, min2), min(INT_MAX, upper))]
-                return [Interval.top()]
+                    return Interval(max(min1, min2), min(INT_MAX, upper))
+                return Interval.top()
 
-            case jvm.BinaryOpr.Shl:
-                if other.single:
-                    s = min2 & 0x1F
-                    return [wrap_or_top(min1 << s, max1 << s)]
-                return [Interval.top()]
+            case jvm.BitOpr.Xor:
+                if self.single and other.single:
+                    val = min1 ^ min2
+                    val = ((val + (1 << 31)) % (1 << 32)) - (1 << 31)
+                    return Interval(val, val)
+                if min1 >= 0 and min2 >= 0:
+                    max_val = max(max1, max2)
+                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
+                    return Interval(0, min(INT_MAX, upper))
+                return Interval.top()
 
-            case jvm.BinaryOpr.Shr:
-                if other.single:
-                    s = min2 & 0x1F
-                    return [Interval(min1 >> s, max1 >> s)]
-                return [Interval.top()]
-
-            case jvm.BinaryOpr.Ushr:
+            case jvm.BitOpr.Shl:
                 if other.single:
                     s = min2 & 0x1F
                     if s == 0:
-                        return [self]
+                        return self
+                    return wrap_or_top(min1 << s, max1 << s)
+                return Interval.top()
+
+            case jvm.BitOpr.Shr:
+                if other.single:
+                    s = min2 & 0x1F
+                    return Interval(min1 >> s, max1 >> s)
+                return Interval.top()
+
+            case jvm.BitOpr.Ushr:
+                if other.single:
+                    s = min2 & 0x1F
+                    if s == 0:
+                        return self
                     if min1 >= 0:
-                        return [Interval(min1 >> s, max1 >> s)]
-                    return [Interval(0, INT_MAX >> (s - 1))]
-                return [Interval.nonneg() if min1 >= 0 else Interval.top()]
+                        return Interval(min1 >> s, max1 >> s)
+                    return Interval(0, INT_MAX >> (s - 1))
+                return Interval.nonneg() if min1 >= 0 else Interval.top()
 
             case _:
-                return [Interval.top()]
+                return Interval.top()
 
     def compare(self, other: "Interval", opr: jvm.CmpOpr) -> Iterable[bool]:
         result: set[bool] = set()
@@ -332,11 +357,6 @@ class Interval(Abstraction, Lattice):
         return Interval(lo, hi)
 
     def split(self, points: Iterable[int]) -> list["Interval"]:
-        """
-        Partition this interval using the exact `points` list produced by
-        `split_points(constants, split)`: every point p in `points` becomes `[p, p]`
-        and open gaps become `[p_i + 1, p_{i+1} - 1]`, matching `range_of()`.
-        """
         if self.is_bot():
             return []
         cursor = self.min
@@ -368,7 +388,6 @@ STR_TO_CMPOPR = {
 
 
 def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) -> Interval:
-    """Invert `left op right in target` for backward input synthesis (e.g. n /= 2 -> [1024, 1055])."""
     if target.is_bot() or right.is_bot():
         return Interval.bot()
     match op:
@@ -395,19 +414,19 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
 
 
 # --------------------------------------------------------------------------
-# Abstract Value & State (matched to step() and initial())
+# Abstract Value & State
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Val:
     iv: Interval
-    src: Optional[int] = None           # local index this value was loaded from
-    may_null: bool = False              # reference may be null
-    may_nonnull: bool = True            # reference may be non-null (iv = array/string length)
-    elem_iv: Interval = Interval.top()  # abstract interval of array elements
-    len_of: Optional[int] = None        # local index of array whose length this value holds
-    bounded_by: Optional[int] = None    # local index of array such that val < arr.length
-    alloc_id: Optional[int] = None      # bytecode offset of NewArray to link stack/local aliases
-    is_ref: bool = False                # True when holding StackReference (skipped in Trace.ranges)
+    src: Optional[int] = None
+    may_null: bool = False
+    may_nonnull: bool = True
+    elem_iv: Interval = Interval.top()
+    len_of: Optional[int] = None
+    bounded_by: Optional[int] = None
+    alloc_id: Optional[int] = None
+    is_ref: bool = False
 
     def join(self, o: "Val", K: Optional[set[int] | list[int]] = None, narrow: bool = False) -> "Val":
         if narrow:
@@ -509,7 +528,6 @@ class State(sexpr.AsSExpr):
         return State(new_locs, stk)
 
     def update_array_elems(self, ref: Val, val_iv: Interval) -> "State":
-        """Propagate ArrayStore element interval to all aliases on stack and locals."""
         def _upd(x: Val) -> Val:
             matches_local = ref.src is not None and x.src == ref.src
             matches_alloc = ref.alloc_id is not None and x.alloc_id == ref.alloc_id
@@ -547,20 +565,9 @@ class State(sexpr.AsSExpr):
 
 
 # --------------------------------------------------------------------------
-# Sound Interval Analysis Engine (Forward Upper Bound + Backward Solver)
+# Sound Interval Analysis Engine
 # --------------------------------------------------------------------------
 class UnboundedIntervalAnalysis:
-    """
-    Sound over-approximate interval analysis aligned with the dynamic interpreter
-    and range-coverage fuzzer (`Trace.ranges`):
-    1. Computes the reachable value intervals at every bytecode PC (with K-widening
-       from `syntactic_constants` and full-join descending narrowing).
-    2. Emits the exact `frozenset[tuple[PC, int, int, int]]` matching `Trace.ranges`
-       for both `split="three"` and `split="boundary"`.
-    3. Solves uncovered `(pc, position, low, high)` targets backward to entry
-       parameter intervals (e.g. `n in [1024, 1055]` in `divisionLoop`).
-    """
-
     def __init__(self, bc: jpamb.Bytecode, entry_method: jvm.AbsMethodID, inputs: jpamb.Input | None = None):
         self.bc = bc
         self.entry_method = entry_method
@@ -572,7 +579,6 @@ class UnboundedIntervalAnalysis:
         self.outcomes: set[str] = set()
         self.preds: dict[PC, list[PC]] = {}
 
-        # Interprocedural & divergence tracking
         self.return_vals: dict[jvm.AbsMethodID, Val] = {}
         self.call_sites: dict[jvm.AbsMethodID, set[PC]] = {}
         self.loop_edges: set[tuple[PC, PC]] = set()
@@ -588,7 +594,6 @@ class UnboundedIntervalAnalysis:
         return self.syntactic_cache[key]
 
     def initial_fuzzer_constants(self, m: jvm.AbsMethodID | None = None, neighbours: bool = True) -> list[int]:
-        """Return seed constants (including c-1, c, c+1) for the fuzzer's initial corpus."""
         target = m or self.entry_method
         syn = self._syntactic_info(target, follow_calls=True)
         if syn is not None:
@@ -597,7 +602,6 @@ class UnboundedIntervalAnalysis:
         return sorted(self._thresholds(target) - {INT_MIN, INT_MAX})
 
     def _thresholds(self, m: jvm.AbsMethodID) -> set[int]:
-        """Build K-widening threshold set from ISY syntactic constants and bytecode literals."""
         if m not in self.K_cache:
             ks = {INT_MIN, INT_MAX, -1, 0, 1}
 
@@ -634,7 +638,6 @@ class UnboundedIntervalAnalysis:
         return self.headers_cache[m]
 
     def _initial_state(self) -> State:
-        """Exact abstract mirror of `initial(bc, methodid, input)` in the dynamic interpreter."""
         method = self.bc.getmethod(self.entry_method)
         locs = [BOT_VAL] * method.max_locals
         params = self.entry_method.extension.params
@@ -754,7 +757,7 @@ class UnboundedIntervalAnalysis:
                     queued.add(succ_pc)
                     heapq.heappush(work, (str(succ_pc.method), succ_pc.offset, succ_pc))
 
-        # 2. Sound descending narrowing pass: join ALL incoming edges before narrowing
+        # 2. Sound descending narrowing pass
         for _ in range(2):
             incoming: dict[PC, State] = {entry_pc: init_st}
             for pc in sorted(self.states.keys(), key=lambda p: (str(p.method), p.offset)):
@@ -897,6 +900,11 @@ class UnboundedIntervalAnalysis:
                     [v2, v1], _ = state.pop(2)
                     out.append((pc + 1, state.push(v2).push(v1)))
 
+            case jvm.Pop(words=w):
+                _, after = state.pop(w)
+                out.append((pc + 1, after))
+
+
             case jvm.Negate():
                 [val], after = state.pop(1)
                 iv = wrap_or_top(-val.iv.max, -val.iv.min) if not val.iv.is_bot() else Interval.bot()
@@ -928,6 +936,12 @@ class UnboundedIntervalAnalysis:
                         out.append(r)
                     elif not r.is_bot():
                         out.append((pc + 1, after.push(Val(r))))
+
+            case jvm.Bitopr(operant=op):
+                [a, b], after = state.pop(2)
+                res_iv = a.iv.bitwise(b.iv, op)
+                if not res_iv.is_bot():
+                    out.append((pc + 1, after.push(Val(res_iv))))
 
             case jvm.Get(static=True, field=field):
                 if getattr(field.extension, "name", "") == "$assertionsDisabled":
@@ -1010,6 +1024,11 @@ class UnboundedIntervalAnalysis:
                         next_st = after.update_array_elems(ref, val.iv)
                         out.append((pc + 1, next_st))
 
+            case jvm.CheckCast():
+                [ref], after = state.pop(1)
+                out.append((pc + 1, after.push(ref)))
+
+
             case jvm.Goto(target=t):
                 out.append((pc % t, state))
 
@@ -1029,6 +1048,13 @@ class UnboundedIntervalAnalysis:
                 [a, b], after = state.pop(2)
                 out.extend(self._branch(pc, after, a, b, cond, target))
 
+            case jvm.InvokeDynamic(method=m):
+                nargs = len(m.extension.params)
+                _, after = state.pop(nargs)
+                returns_void = m.extension.return_type is None or str(m).endswith("V")
+                ret_val = Val(Interval.nonneg(), may_null=False, may_nonnull=True, elem_iv=Interval(0, 65535), is_ref=True)
+                out.append((pc + 1, after if returns_void else after.push(ret_val)))
+
             case jvm.InvokeStatic(method=m):
                 nargs = len(m.extension.params)
                 args, after = state.pop(nargs)
@@ -1045,7 +1071,7 @@ class UnboundedIntervalAnalysis:
                     out.append((PC(m, 0), State(tuple(locs), ())))
                 except Exception:
                     self.has_unknown_call = True
-                    self.outcomes.update({"assertion error", "divide by zero", "null pointer", "out of bounds"})
+                    self.outcomes.update(ALL_OUTCOMES)
                     out.append((pc + 1, after if returns_void else after.push(TOP_VAL)))
 
             case (
@@ -1091,6 +1117,12 @@ class UnboundedIntervalAnalysis:
                                 out.append((pc + 1, after.push(Val(ch_iv))))
                             case _:
                                 out.append((pc + 1, after if returns_void else after.push(TOP_VAL)))
+                    elif classname_str == "jpamb.utils.Smith":
+                        self.has_unknown_call = True
+                        if method_name in ("nextBoolean", "flip"):
+                            out.append((pc + 1, after.push(Val(Interval(0, 1)))))
+                        else:
+                            out.append((pc + 1, after if returns_void else after.push(Val(Interval.top()))))
                     else:
                         try:
                             callee = self.bc.getmethod(m)
@@ -1113,19 +1145,16 @@ class UnboundedIntervalAnalysis:
                                 out.append((pc + 1, after if returns_void else after.push(TOP_VAL)))
                             else:
                                 self.has_unknown_call = True
-                                self.outcomes.update(
-                                    {"assertion error", "divide by zero", "null pointer", "out of bounds"}
-                                )
+                                self.outcomes.update(ALL_OUTCOMES)
                                 out.append((pc + 1, after if returns_void else after.push(TOP_VAL)))
 
             case _:
                 self.has_unknown_call = True
-                self.outcomes.update({"assertion error", "divide by zero", "null pointer", "out of bounds"})
+                self.outcomes.update(ALL_OUTCOMES)
 
         return out
 
     def _is_ref_test(self, pc: PC, a: Val) -> bool:
-        """ifz on a reference is a null test (ifnull / ifnonnull), not `== 0`."""
         if a.may_null or a.is_ref:
             return True
         if pc.offset > 0:
@@ -1213,10 +1242,6 @@ class UnboundedIntervalAnalysis:
     def reachable_range_tuples(
         self, split: str = "three", m: jvm.AbsMethodID | None = None
     ) -> frozenset[tuple[PC, int, int, int]]:
-        """
-        Compute the sound upper bound of `(pc, position, low, high)` coverage tuples
-        matching the fuzzer's `Trace.ranges` (`split` in {"three", "boundary"}).
-        """
         target = m or self.entry_method
         points_cache: dict[jvm.AbsMethodID, list[int]] = {}
         tuples: set[tuple[PC, int, int, int]] = set()
@@ -1234,7 +1259,6 @@ class UnboundedIntervalAnalysis:
             pts = points_cache[pc.method]
 
             for position, val in enumerate(ops):
-                # Mirror dynamic `run()`: `if isinstance(operand, jvmc.StackInt):`
                 if val.is_ref or (val.may_null and not val.may_nonnull) or val.iv.is_bot():
                     continue
                 for sub_iv in val.iv.split(pts):
@@ -1247,11 +1271,6 @@ class UnboundedIntervalAnalysis:
         target_tuple: tuple[PC, int, int, int],
         param_idx: int = 0,
     ) -> Interval:
-        """
-        Extension phase: given an uncovered `(pc, position, low, high)` tuple from
-        `reachable_range_tuples - corpus.coverage`, walk backward to synthesize the
-        input parameter interval for `param_idx` (e.g. `n in [1024, 1055]` in `divisionLoop`).
-        """
         target_pc, position, low, high = target_tuple
         cur_iv = Interval(low, high)
         curr = target_pc
@@ -1299,18 +1318,10 @@ class UnboundedIntervalAnalysis:
 
 
 # --------------------------------------------------------------------------
-# Programmatic Oracle for Fuzzer Integration (Tasks ISY + IBA + ICF + NAN)
+# Programmatic Oracle for Fuzzer Integration
 # --------------------------------------------------------------------------
 @dataclass
 class RangeCoverageOracle:
-    """
-    Drop-in interface for the range-guided fuzzer (`Corpus`):
-    - `upper_bound`: frozenset of `(pc, position, low, high)` matching `Trace.ranges`
-    - `seed_constants`: initial constants (including neighbours) from `syntactic_constants`
-    - `is_complete(covered)`: True when `covered >= upper_bound` (fuzzer can stop early)
-    - `false_negatives(covered)`: any runtime range outside `upper_bound` (unsoundness check)
-    - `solve_uncovered(covered, param_idx)`: backward solver for uncovered range targets
-    """
     methodid: jvm.AbsMethodID
     split: str
     analysis: UnboundedIntervalAnalysis
@@ -1333,21 +1344,17 @@ class RangeCoverageOracle:
         )
 
     def is_complete(self, covered: Iterable[tuple[PC, int, int, int]]) -> bool:
-        """Stopping criterion: under-approximation (`covered`) meets static upper bound."""
         return self.upper_bound.issubset(set(covered))
 
     def uncovered(self, covered: Iterable[tuple[PC, int, int, int]]) -> set[tuple[PC, int, int, int]]:
-        """Ranges permitted by static analysis that the fuzzer has not reached yet."""
         return set(self.upper_bound) - set(covered)
 
     def false_negatives(self, covered: Iterable[tuple[PC, int, int, int]]) -> set[tuple[PC, int, int, int]]:
-        """Ranges reached dynamically that static analysis ruled out (must be empty for soundness)."""
         return set(covered) - set(self.upper_bound)
 
     def solve_uncovered(
         self, covered: Iterable[tuple[PC, int, int, int]], param_idx: int = 0
     ) -> dict[tuple[PC, int, int, int], Interval]:
-        """Backward synthesis of input parameter intervals for each still-uncovered range."""
         solutions: dict[tuple[PC, int, int, int], Interval] = {}
         for target in self.uncovered(covered):
             sol = self.analysis.solve_uncovered_range(target, param_idx=param_idx)
@@ -1360,7 +1367,6 @@ class RangeCoverageOracle:
 # JPAMB CLI Entry Points (analyse / interpret)
 # --------------------------------------------------------------------------
 def interpret():
-    """JPAMB interpreter mode for step-by-step abstract state emission."""
     methodid, input_val, steps = jpamb.getcase(
         "unbounded",
         "1.0",
@@ -1386,7 +1392,6 @@ def interpret():
 
 
 def analyse():
-    """JPAMB static analysis entry point (`jpamb analyse ... unbounded`)."""
     methodid = jpamb.getmethodid(
         "unbounded",
         "1.0",
