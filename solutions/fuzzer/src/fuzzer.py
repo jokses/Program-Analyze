@@ -19,6 +19,26 @@ MAX_RUNS_SINCE_NEW = 1_000
 MAX_STEPS = 1_000
 
 
+INVOKES = (jvm.InvokeStatic, jvm.InvokeVirtual, jvm.InvokeSpecial, jvm.InvokeInterface)
+
+
+# The fuzzed method and the case methods it calls, also through other calls.
+def methods_reached(bc: jpamb.Bytecode, methodid: jvm.AbsMethodID) -> set:
+    methods = {methodid}
+    todo = [methodid]
+    while todo:
+        for opcode in bc.getmethod(todo.pop()).opcodes:
+            if isinstance(opcode, INVOKES):
+                callee = opcode.method
+                if (
+                    callee.classname.dotted().startswith("jpamb.cases")
+                    and callee not in methods
+                ):
+                    methods.add(callee)
+                    todo.append(callee)
+    return methods
+
+
 # The ranges the interval analysis can reach, in the format of Trace.ranges.
 # None means we have no analysis yet.
 def bound(methodid: jvm.AbsMethodID) -> set | None:
@@ -58,6 +78,8 @@ def fuzz(
     constants = sorted(dynamic.ints_in_method(method))
     constants += dynamic.strings_in_method(method)
     first_codes = [b""] + [dynamic.constant_code(params, c) for c in constants]
+    reached = methods_reached(bc, methodid)
+    all_instructions = sum(len(bc.getmethod(m).opcodes) for m in reached)
 
     method_bound = bound(methodid)
     instructions = set()
@@ -96,8 +118,8 @@ def fuzz(
         if version != "random" and code is not None:
             corpus.add(code, coverage)
 
-        covered = {pc.offset for pc in instructions if pc.method == methodid}
-        if version == "instruction" and len(covered) == len(method.opcodes):
+        covered = {pc for pc in instructions if pc.method in reached}
+        if version == "instruction" and len(covered) == all_instructions:
             reason = "full instruction coverage"
         elif version == "range" and method_bound is not None and method_bound <= ranges:
             reason = "ranges meet the bound"

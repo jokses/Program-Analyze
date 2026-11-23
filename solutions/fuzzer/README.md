@@ -23,7 +23,7 @@ python -m pytest solutions/fuzzer/tests
 - We record ranges at comparisons, `idiv`, `irem` and array indices.
 - The split points are 0 and the constants the method compares with. We get these from Adriana's syntactic analysis. `--split three` is the default and gives < c, = c and > c. `--split boundary` also gives c-1 and c+1 their own range.
 - `instruction` only counts new instructions as new coverage and the other two also count new ranges.
-- Full coverage only means the instructions in the fuzzed method and not the ones it calls.
+- Full coverage means the instructions of the fuzzed method, of the case methods it calls and of the case methods those call.
 - Arrays and strings get at most 8 elements, and a run stops with `*` after 1,000 steps.
 - `bound(method)` returns None until we have the interval analysis.
 - Negative array sizes give `negative array size` and arrays over 1,000,000 elements give `out of memory`. JPAMB does not have these outcomes though so we should be fine.
