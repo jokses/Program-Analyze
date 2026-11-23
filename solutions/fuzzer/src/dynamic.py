@@ -2,6 +2,7 @@ import bisect
 import functools
 import random
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from syntactic_constants import constants_for_method_id
@@ -688,9 +689,8 @@ def range_of(value: int, points: list[int]) -> tuple[int, int]:
     return (low, high)
 
 
-# The operands we record a range for.
-def operands(opcode: jvm.Opcode, stack: jvmc.OperandStack) -> list[jvmc.StackValue]:
-    values = stack.operands
+# The operands we record a range for, from the stack values with the top last.
+def operands(opcode: jvm.Opcode, values: Sequence) -> list:
     match opcode:
         case jvm.If() | jvm.Binary(operant=jvm.BinaryOpr.Div | jvm.BinaryOpr.Rem):
             return [values[-2], values[-1]]
@@ -725,7 +725,8 @@ def run(
             if method not in points:
                 points[method] = split_points(set(comparisons_in_method(method)), split)
             # The operands are read before step pops them.
-            for position, operand in enumerate(operands(bc[frame.pc], frame.stack)):
+            stack = frame.stack.operands
+            for position, operand in enumerate(operands(bc[frame.pc], stack)):
                 # Reference comparisons like if_acmpeq have no int range.
                 if isinstance(operand, jvmc.StackInt):
                     low, high = range_of(operand.value, points[method])
