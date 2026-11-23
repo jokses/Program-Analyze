@@ -123,6 +123,9 @@ def fuzz(
             reason = "full instruction coverage"
         elif version == "range" and method_bound is not None and method_bound <= ranges:
             reason = "ranges meet the bound"
+        elif not params:
+            # Without parameters every run is the same.
+            reason = "no parameters"
         elif runs_since_new >= MAX_RUNS_SINCE_NEW:
             reason = "no new coverage"
         elif runs >= MAX_RUNS:
