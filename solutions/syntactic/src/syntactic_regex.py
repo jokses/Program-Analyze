@@ -33,9 +33,13 @@ def strip_comments(text):
     return text
 
 
+# A method may declare exceptions between its parameters and its body.
+THROWS = r"(?:throws\s+[\w.]+(?:\s*,\s*[\w.]+)*\s*)?"
+
+
 def find_method_body(content, method_name):
     # Find the method, taking into account that it may contain if statements, loops, etc., and not just the closing brace.
-    pattern = rf"\b{re.escape(method_name)}\s*\([^)]*\)\s*\{{"
+    pattern = rf"\b{re.escape(method_name)}\s*\([^)]*\)\s*{THROWS}\{{"
     match = re.search(pattern, content)
 
     if not match:
@@ -542,7 +546,7 @@ def extract_methods(content):
         r"(?:public|private|protected|static|final|synchronized|native|abstract|"
         r"\s)+"
         r"(?:[\w<>,\[\]?]+\s+)+"  # return type; supports forms such as List<String>, int[], or Map<K, V>
-        r"(\w+)\s*\(([^)]*)\)\s*\{"
+        r"(\w+)\s*\(([^)]*)\)\s*" + THROWS + r"\{"
     )
 
     for match in signature.finditer(content):
