@@ -276,7 +276,7 @@ class Interval(Abstraction, Lattice):
         min = self.min
         max = self.max
 
-        KSorted = sorted(K)
+        KSorted = sorted(k for k in K if min <= k <= max)
 
         cursor = min
         interval_list = list()
