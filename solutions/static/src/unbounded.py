@@ -2,33 +2,22 @@
 from __future__ import annotations
 
 import argparse
-import bisect
-import functools
 import heapq
 import sys
 import traceback
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional, Self
+
+from dynamic import comparisons_in_method, operands, split_points
+from syntactic_constants import MethodConstants, constants_for_method_id
+from tools import Abstraction, Lattice
 
 import jpamb
 import jvm
 import jvm.state as jvms
 import sexpr
 from jvm.state import PC
-from tools import Abstraction, Lattice
-
-# Wire in task ISY (syntactic_constants.py) from solutions/syntactic/src/
-_SYNTACTIC_SRC = Path(__file__).resolve().parents[2] / "syntactic" / "src"
-if _SYNTACTIC_SRC.is_dir() and str(_SYNTACTIC_SRC) not in sys.path:
-    sys.path.insert(0, str(_SYNTACTIC_SRC))
-
-try:
-    from syntactic_constants import MethodConstants, constants_for_method_id
-except ImportError:
-    MethodConstants = None  # type: ignore[assignment,misc]
-    constants_for_method_id = None  # type: ignore[assignment]
 
 INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
@@ -368,65 +357,6 @@ class Interval(Abstraction, Lattice):
         return interval_list
 
 
-# --------------------------------------------------------------------------
-# Exact Mirrors of Dynamic Interpreter / Fuzzer Range Helpers
-# --------------------------------------------------------------------------
-@functools.cache
-def comparisons_in_method(methodid: jvm.AbsMethodID) -> frozenset[int]:
-    """Exact mirror of `comparisons_in_method` in the dynamic fuzzer."""
-    if constants_for_method_id is None:
-        return frozenset()
-    try:
-        return constants_for_method_id(methodid.encode(), follow_calls=False).comparisons
-    except (ValueError, OSError):
-        return frozenset()
-
-
-def split_points(constants: set[int], split: str) -> list[int]:
-    """Exact mirror of `split_points` in the dynamic fuzzer."""
-    points = set()
-    for constant in constants | {0}:
-        match split:
-            case "three":
-                points.add(constant)
-            case "boundary":
-                points.update({constant - 1, constant, constant + 1})
-            case a:
-                raise NotImplementedError(f"{a!r}")
-    return sorted(point for point in points if -(2**31) <= point < 2**31)
-
-
-def range_of(value: int, points: list[int]) -> tuple[int, int]:
-    """Exact mirror of `range_of` in the dynamic fuzzer."""
-    index = bisect.bisect_left(points, value)
-    if index < len(points) and points[index] == value:
-        return (value, value)
-    low = points[index - 1] + 1 if index > 0 else -(2**31)
-    high = points[index] - 1 if index < len(points) else 2**31 - 1
-    return (low, high)
-
-
-def operands_at_pc(opcode: jvm.Opcode, stack: tuple["Val", ...]) -> list["Val"]:
-    """
-    Exact mirror of `operands(opcode, stack)` in the dynamic fuzzer:
-    - If / Binary(Div | Rem): [values[-2], values[-1]]
-    - Ifz:                    [values[-1]]
-    - ArrayLoad:              [values[-1]]  (stack is array, index)
-    - ArrayStore:             [values[-2]]  (stack is array, index, value)
-    """
-    match opcode:
-        case jvm.If() | jvm.Binary(operant=jvm.BinaryOpr.Div | jvm.BinaryOpr.Rem) if len(stack) >= 2:
-            return [stack[-2], stack[-1]]
-        case jvm.Ifz() if len(stack) >= 1:
-            return [stack[-1]]
-        case jvm.ArrayLoad() if len(stack) >= 1:
-            return [stack[-1]]
-        case jvm.ArrayStore() if len(stack) >= 2:
-            return [stack[-2]]
-        case _:
-            return []
-
-
 STR_TO_CMPOPR = {
     "eq": jvm.CmpOpr.Eq,
     "ne": jvm.CmpOpr.Ne,
@@ -651,13 +581,10 @@ class UnboundedIntervalAnalysis:
     def _syntactic_info(self, m: jvm.AbsMethodID, follow_calls: bool = True) -> MethodConstants | None:
         key = (m, follow_calls)
         if key not in self.syntactic_cache:
-            if constants_for_method_id is None:
+            try:
+                self.syntactic_cache[key] = constants_for_method_id(m.encode(), follow_calls=follow_calls)
+            except (ValueError, OSError):
                 self.syntactic_cache[key] = None
-            else:
-                try:
-                    self.syntactic_cache[key] = constants_for_method_id(m.encode(), follow_calls=follow_calls)
-                except (ValueError, OSError):
-                    self.syntactic_cache[key] = None
         return self.syntactic_cache[key]
 
     def initial_fuzzer_constants(self, m: jvm.AbsMethodID | None = None, neighbours: bool = True) -> list[int]:
@@ -1298,7 +1225,7 @@ class UnboundedIntervalAnalysis:
             if m is not None and pc.method != target:
                 continue
             opr = self.bc[pc]
-            ops = operands_at_pc(opr, st.stack)
+            ops = operands(opr, st.stack)
             if not ops:
                 continue
 
@@ -1333,7 +1260,7 @@ class UnboundedIntervalAnalysis:
 
         st_at_target = self.states.get(target_pc)
         if st_at_target is not None:
-            ops = operands_at_pc(self.bc[target_pc], st_at_target.stack)
+            ops = operands(self.bc[target_pc], st_at_target.stack)
             if position < len(ops) and ops[position].src is not None:
                 tracked_local = ops[position].src
 

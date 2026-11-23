@@ -9,8 +9,10 @@ description = "The start of an abstract interpreter"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+  "fuzzer",
   "hypothesis>=6.168.2",
   "jpamb",
+  "syntactic",
 ]
 
 
@@ -19,7 +21,9 @@ static-interpreter = "static:interpret"
 static-analysis = "static:analyse"
 
 [tool.uv.sources]
+fuzzer = { path = "../fuzzer", editable = true }
 jpamb = { path = "../../", editable = true }
+syntactic = { path = "../syntactic", editable = true }
 
 [dependency-groups]
 dev = [
