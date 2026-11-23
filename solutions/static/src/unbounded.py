@@ -611,14 +611,6 @@ class UnboundedIntervalAnalysis:
                 self.syntactic_cache[key] = None
         return self.syntactic_cache[key]
 
-    def initial_fuzzer_constants(self, m: jvm.AbsMethodID | None = None, neighbours: bool = True) -> list[int]:
-        target = m or self.entry_method
-        syn = self._syntactic_info(target, follow_calls=True)
-        if syn is not None:
-            vals = syn.with_neighbours() if neighbours else syn.values
-            return sorted(vals | {-1, 0, 1})
-        return sorted(self._thresholds(target) - {INT_MIN, INT_MAX})
-
     def _thresholds(self, m: jvm.AbsMethodID) -> set[int]:
         if m not in self.K_cache:
             ks = {INT_MIN, INT_MAX, -1, 0, 1}
@@ -1339,45 +1331,15 @@ class UnboundedIntervalAnalysis:
 
 @dataclass
 class RangeCoverageOracle:
-    methodid: jvm.AbsMethodID
-    split: str
     analysis: UnboundedIntervalAnalysis
     upper_bound: frozenset[tuple[PC, int, int, int]]
-    seed_constants: list[int]
 
     @classmethod
     def build(
         cls, bc: jpamb.Bytecode, methodid: jvm.AbsMethodID, split: str = "three"
     ) -> "RangeCoverageOracle":
         analysis = UnboundedIntervalAnalysis(bc, methodid, None).run()
-        upper_bound = analysis.reachable_range_tuples(split=split, m=None)
-        seeds = analysis.initial_fuzzer_constants(methodid, neighbours=True)
-        return cls(
-            methodid=methodid,
-            split=split,
-            analysis=analysis,
-            upper_bound=upper_bound,
-            seed_constants=seeds,
-        )
-
-    def is_complete(self, covered: Iterable[tuple[PC, int, int, int]]) -> bool:
-        return self.upper_bound.issubset(set(covered))
-
-    def uncovered(self, covered: Iterable[tuple[PC, int, int, int]]) -> set[tuple[PC, int, int, int]]:
-        return set(self.upper_bound) - set(covered)
-
-    def false_negatives(self, covered: Iterable[tuple[PC, int, int, int]]) -> set[tuple[PC, int, int, int]]:
-        return set(covered) - set(self.upper_bound)
-
-    def solve_uncovered(
-        self, covered: Iterable[tuple[PC, int, int, int]], param_idx: int = 0
-    ) -> dict[tuple[PC, int, int, int], Interval]:
-        solutions: dict[tuple[PC, int, int, int], Interval] = {}
-        for target in self.uncovered(covered):
-            sol = self.analysis.solve_uncovered_range(target, param_idx=param_idx)
-            if not sol.is_bot():
-                solutions[target] = sol
-        return solutions
+        return cls(analysis, analysis.reachable_range_tuples(split=split))
 
 
 def interpret():
