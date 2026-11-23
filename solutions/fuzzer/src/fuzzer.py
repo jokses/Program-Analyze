@@ -4,7 +4,7 @@ import json
 import random
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import dynamic
 
@@ -39,12 +39,6 @@ def methods_reached(bc: jpamb.Bytecode, methodid: jvm.AbsMethodID) -> set:
     return methods
 
 
-# The ranges the interval analysis can reach, in the format of Trace.ranges.
-# None means we have no analysis yet.
-def bound(methodid: jvm.AbsMethodID) -> set | None:
-    return None
-
-
 @dataclass(frozen=True)
 class Result:
     method: str
@@ -54,11 +48,19 @@ class Result:
     runs: int = 0
     cpu_seconds: float = 0.0
     stop_reason: str = ""
-    runs_since_new: int = 0
+    # The run that last gave new coverage.
+    last_new_run: int = 0
     outcomes: tuple[str, ...] = ()
     instructions: tuple[str, ...] = ()
     ranges: tuple[tuple[str, int, int, int], ...] = ()
     kept_inputs: tuple[str, ...] = ()
+    # Only with a bound from the interval analysis.
+    analysis_seconds: float = 0.0
+    bound_size: int | None = None
+    bound_not_covered: int | None = None
+    # Ranges the fuzzer reached that the bound rules out. Any of them means the bound
+    # is wrong.
+    outside_bound: tuple[tuple[str, int, int, int], ...] = ()
     error: str | None = None
 
 
@@ -69,6 +71,7 @@ def fuzz(
     version: str,
     seed: int,
     split: str,
+    bound: frozenset | None = None,
 ) -> Result:
     # The same method, version and seed give the same inputs.
     rand = random.Random(f"{methodid.encode()}|{version}|{seed}")
@@ -81,13 +84,12 @@ def fuzz(
     reached = methods_reached(bc, methodid)
     all_instructions = sum(len(bc.getmethod(m).opcodes) for m in reached)
 
-    method_bound = bound(methodid)
     instructions = set()
     ranges = set()
     seen = set()
     outcomes = set()
     runs = 0
-    runs_since_new = 0
+    last_new_run = 0
     start = time.process_time()
     while True:
         if first_codes:
@@ -110,10 +112,8 @@ def fuzz(
             coverage = trace.instructions
         else:
             coverage = trace.instructions | trace.ranges
-        if coverage <= seen:
-            runs_since_new += 1
-        else:
-            runs_since_new = 0
+        if not coverage <= seen:
+            last_new_run = runs
             seen |= coverage
         if version != "random" and code is not None:
             corpus.add(code, coverage)
@@ -121,12 +121,12 @@ def fuzz(
         covered = {pc for pc in instructions if pc.method in reached}
         if version == "instruction" and len(covered) == all_instructions:
             reason = "full instruction coverage"
-        elif version == "range" and method_bound is not None and method_bound <= ranges:
+        elif version == "range" and bound is not None and bound <= ranges:
             reason = "ranges meet the bound"
         elif not params:
             # Without parameters every run is the same.
             reason = "no parameters"
-        elif runs_since_new >= MAX_RUNS_SINCE_NEW:
+        elif runs - last_new_run >= MAX_RUNS_SINCE_NEW:
             reason = "no new coverage"
         elif runs >= MAX_RUNS:
             reason = "max runs"
@@ -141,14 +141,21 @@ def fuzz(
             runs=runs,
             cpu_seconds=round(time.process_time() - start, 3),
             stop_reason=reason,
-            runs_since_new=runs_since_new,
+            last_new_run=last_new_run,
             outcomes=tuple(sorted(outcomes)),
             instructions=tuple(sorted(pc.encode() for pc in instructions)),
-            ranges=tuple(sorted((pc.encode(), *rest) for pc, *rest in ranges)),
+            ranges=encode(ranges),
             kept_inputs=tuple(
                 corpus.fuzz_input(c).encode() for c in corpus.interesting
             ),
+            bound_size=None if bound is None else len(bound),
+            bound_not_covered=None if bound is None else len(bound - ranges),
+            outside_bound=() if bound is None else encode(ranges - bound),
         )
+
+
+def encode(ranges: set) -> tuple[tuple[str, int, int, int], ...]:
+    return tuple(sorted((pc.encode(), *rest) for pc, *rest in ranges))
 
 
 def all_methods(suite: jpamb.Suite, *, eff: jpamb.Effect) -> list[jvm.AbsMethodID]:
@@ -156,7 +163,9 @@ def all_methods(suite: jpamb.Suite, *, eff: jpamb.Effect) -> list[jvm.AbsMethodI
     return [methods[name] for name in sorted(methods)]
 
 
-def main():
+# bound_of(bc, methodid, split) gives the ranges the interval analysis can reach, in
+# the format of Trace.ranges. The analysis passes it in because it depends on the fuzzer.
+def main(bound_of=None):
     parser = argparse.ArgumentParser(
         description="Fuzz JPAMB methods and write one JSON row per method, version and seed."
     )
@@ -180,21 +189,44 @@ def main():
     # Absolute menace of a loop composition as this would never ever be acceptable theoretically but it works pratically.
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
         for methodid in methods:
+            bound = None
+            analysis_seconds = 0.0
+            analysis_error = None
+            if bound_of is not None:
+                start = time.process_time()
+                try:
+                    bound = frozenset(bound_of(bc, methodid, args.split))
+                except Exception as e:  # ruff: ignore[BLE001]
+                    analysis_error = e
+                analysis_seconds = round(time.process_time() - start, 3)
             for version in args.versions.split(","):
                 for seed in range(args.seeds):
-                    try:
-                        result = fuzz(
-                            bc, methodid, version=version, seed=seed, split=args.split
-                        )
-                    except Exception as e:  # ruff: ignore[BLE001]
-                        # The interpreter and fuzz_input raise on what they do not support.
+                    # When the analysis fails every version crashes, so all versions
+                    # are compared on the same methods.
+                    error = analysis_error
+                    if error is None:
+                        try:
+                            result = fuzz(
+                                bc,
+                                methodid,
+                                version=version,
+                                seed=seed,
+                                split=args.split,
+                                bound=bound,
+                            )
+                            result = replace(result, analysis_seconds=analysis_seconds)
+                        except Exception as e:  # ruff: ignore[BLE001]
+                            # The interpreter and fuzz_input raise on what they do not
+                            # support.
+                            error = e
+                    if error is not None:
                         result = Result(
                             methodid.encode(),
                             version,
                             seed,
                             split=args.split,
                             stop_reason="crash",
-                            error=repr(e),
+                            error=repr(error),
                         )
                     out.write(json.dumps(asdict(result)) + "\n")
                     out.flush()

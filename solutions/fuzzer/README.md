@@ -25,6 +25,6 @@ python -m pytest solutions/fuzzer/tests
 - `instruction` only counts new instructions as new coverage and the other two also count new ranges.
 - Full coverage means the instructions of the fuzzed method, of the case methods it calls and of the case methods those call.
 - Arrays and strings get at most 8 elements, and a run stops with `*` after 1,000 steps.
-- `bound(method)` returns None until we have the interval analysis.
+- Without a bound the `range` version only stops on the run rules. `fuzzer-with-bound` from `solutions/static` takes the same options as `fuzzer` and gives every run the bound from the interval analysis. `range` then also stops when it has covered every range in the bound, and every line gets the analysis time, the size of the bound, how much of it was not covered and the covered ranges outside it.
 - A method without parameters only gets one run, because every run would be the same.
 - Negative array sizes give `negative array size` and arrays over 1,000,000 elements give `out of memory`. JPAMB does not have these outcomes though so we should be fine.
