@@ -1,5 +1,17 @@
 # The Change Log
 
+## Version 0.10.0
+
+- Special thanks to the class of 2026, we have added a lot of extra cases.
+- Also some better support for building the benchmark suite have been added.
+
+## Version 0.9.0
+
+- Remove autolab files
+- Clean up logging output
+- Enable users to bring their own interpreter to jpamb build --benchmark <tool>,
+  see docs/extending-jpamb.md for more.
+
 ## Version 0.8.0
 
 - Add Static analysis skeleton

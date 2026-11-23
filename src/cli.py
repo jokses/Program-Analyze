@@ -104,6 +104,12 @@ def checkhealth(ctx, docker):
     help="also run the cases with the `all` input",
 )
 @click.option(
+    "--coverage / --no-coverage",
+    show_default=True,
+    default=True,
+    help="check if the interperter gets full coverage",
+)
+@click.option(
     "--timeout",
     show_default=True,
     default=2.0,
@@ -132,6 +138,7 @@ def interpret(
     step_wise,
     report,
     abstract,
+    coverage,
     **kwargs,
 ):
     """Use PROGRAM as an interpreter."""
@@ -148,10 +155,8 @@ def interpret(
     if filter != re.compile(".*") and report:
         raise click.UsageError(f"Cannot produce report in while filtering {filter}")
 
-    benchmark = ctx.suite.benchmark(eff=eff)
-
     experiments = []
-    for experiment in sorted(benchmark.experiments):
+    for experiment in sorted(ctx.suite.experiments(eff=eff)):
         if not filter.search(str(experiment)):
             eff.debug(f"Skipping {experiment}, excluded by filter")
             continue
@@ -162,6 +167,12 @@ def interpret(
 
         experiments.append(experiment)
 
+    if coverage:
+        eff.info("Loading coverage information from benchmark.sexp")
+        benchmark = ctx.suite.benchmark(eff=eff)
+    else:
+        benchmark = jpamb.case.Benchmark.from_cases(ctx.suite.cases(eff=eff))
+
     try:
         config = jpamb.interpret.Config.from_cmd(
             program,
@@ -171,12 +182,7 @@ def interpret(
             **kwargs,
         )
     except Exception as e:  # ruff: ignore[BLE001]
-        eff.debug(f"Error: {e}")
-        eff.error("Failed to instantiate config")
-        sys.exit(1)
-
-    if config is None:
-        eff.debug("No config created")
+        eff.error(f"Error: {e}")
         eff.error("Failed to instantiate config")
         sys.exit(1)
 
@@ -202,7 +208,14 @@ def interpret(
     if state is None:
         state = jpamb.interpret.State(config)
 
-    for cont in iter(lambda: state.run_next(benchmark=benchmark, eff=eff), None):
+    for cont in iter(
+        lambda: state.run_next(
+            benchmark=benchmark,
+            workdir=ctx.suite.workdir,
+            eff=eff,
+        ),
+        None,
+    ):
         if step_wise and not cont:
             state.rewind()
             eff.error("Stopping early")
@@ -334,7 +347,12 @@ def analyse(
         state = jpamb.analyse.State(config)
 
     for cont in iter(
-        lambda: state.run_next(benchmark=benchmark, score_limit=score_limit, eff=eff),
+        lambda: state.run_next(
+            benchmark=benchmark,
+            score_limit=score_limit,
+            workdir=ctx.suite.workdir,
+            eff=eff,
+        ),
         None,
     ):
         if step_wise and not cont:
@@ -430,13 +448,19 @@ def validate(ctx, kind, report, format):
     default=None,
 )
 @click.option(
-    "--benchmark / --no-benchmark",
-    help="test that all cases are correct.",
+    "--benchmark",
+    help="benchmark the application against the executable.",
     default=None,
 )
 @click.pass_obj
 def build(ctx, compile, document, test, benchmark):
     """Rebuild all benchmarks."""
+
+    eff = ctx.eff
+
+    if ctx.suite.workdir != Path.cwd():
+        eff.warning(f"Changing to {ctx.suite.workdir}")
+        os.chdir(ctx.suite.workdir)
 
     if not any(s for s in [compile, document, test, benchmark]):
         compile = compile is None
@@ -455,26 +479,21 @@ def build(ctx, compile, document, test, benchmark):
         ctx.suite.test(docker=docker, eff=ctx.eff)
 
     if benchmark:
-        tools = ["solution-dynamic-interpreter"]
-        tool_configs = []
-        for tool in tools:
-            tool_bin = shutil.which(tool)
-            if not tool_bin:
-                ctx.eff.warning(f"did not have {tool} installed...")
-                continue
+        tool_bin = shutil.which(benchmark)
+        if not tool_bin:
+            ctx.eff.error(f"did not have {benchmark} installed...")
+            sys.exit(1)
 
-            config = jpamb.interpret.Config.from_cmd(
-                (tool_bin,),
-                experiments=[],
-                max_steps=100,
-                timeout=5.0,
-                eff=ctx.eff,
-                abstract=False,
-            )
-            tool_configs.append(config)
+        config = jpamb.interpret.Config.from_cmd(
+            (tool_bin,),
+            experiments=[],
+            max_steps=100,
+            timeout=5.0,
+            eff=ctx.eff,
+            abstract=False,
+        )
 
-        if tools:
-            ctx.suite.run_benchmark(*tool_configs, eff=ctx.eff)
+        ctx.suite.run_benchmark(config, eff=ctx.eff)
 
 
 @cli.command()
