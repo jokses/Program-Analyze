@@ -691,7 +691,8 @@ def comparisons_in_method(methodid: jvm.AbsMethodID) -> frozenset[int]:
     return constants_for_method_id(methodid.encode(), follow_calls=False).comparisons
 
 
-# A point is a range of its own and the values between two points are one range.
+# arraySumIsLarge compares the sum with 300. With "three" its points are 0 and 300 and
+# the ranges are [-2**31, -1], [0, 0], [1, 299], [300, 300] and [301, 2**31 - 1].
 # For a constant c, "three" uses c as a point and "boundary" uses c-1, c and c+1.
 def split_points(constants: set[int], split: str) -> list[int]:
     # Source: https://courses.compute.dtu.dk/02242/topics/unbounded-static-analysis.html#sec:2.3

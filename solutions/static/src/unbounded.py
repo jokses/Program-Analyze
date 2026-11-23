@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Optional, Self
 
-from dynamic import comparisons_in_method, operands, split_points
+from dynamic import comparisons_in_method, operands, range_of, split_points
 from syntactic_constants import MethodConstants, constants_for_method_id
 from tools import Abstraction, Lattice
 
@@ -1261,8 +1261,9 @@ class UnboundedIntervalAnalysis:
             for position, val in enumerate(ops):
                 if val.is_ref or (val.may_null and not val.may_nonnull) or val.iv.is_bot():
                     continue
+                # With the points 0 and 300 the fuzzer records 7 as the range [1, 299].
                 for sub_iv in val.iv.split(pts):
-                    tuples.add((pc, position, sub_iv.min, sub_iv.max))
+                    tuples.add((pc, position, *range_of(sub_iv.min, pts)))
 
         return frozenset(tuples)
 
