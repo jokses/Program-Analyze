@@ -152,6 +152,7 @@ def main():
     else:
         methods = [jvm.AbsMethodID.decode(name) for name in args.methods]
 
+    # Absolute menace of a loop composition as this would never ever be acceptable theoretically but it works pratically.
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
         for methodid in methods:
             for version in args.versions.split(","):
