@@ -6,7 +6,7 @@ import heapq
 import sys
 import traceback
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Self
 
 from dynamic import comparisons_in_method, operands, range_of, split_points
@@ -377,6 +377,14 @@ class Interval(Abstraction, Lattice):
         return interval_list
 
 
+# A cast wraps a value that does not fit, like (short) 40000 == -25536. Only an
+# interval that already fits keeps its bounds.
+def cast_interval(iv: Interval, target: Interval) -> Interval:
+    if iv.is_bot() or (target.min <= iv.min and iv.max <= target.max):
+        return iv
+    return target
+
+
 STR_TO_CMPOPR = {
     "eq": jvm.CmpOpr.Eq,
     "ne": jvm.CmpOpr.Ne,
@@ -475,7 +483,7 @@ class State(sexpr.AsSExpr):
             raise AnalysisError(f"stack height mismatch: {len(self.stack)} vs {len(other.stack)}")
         n_loc = max(len(self.locals), len(other.locals))
         l1 = self.locals + (BOT_VAL,) * (n_loc - len(self.locals))
-        l2 = other.locals + (BOT_VAL,) * (n_loc - len(self.locals))
+        l2 = other.locals + (BOT_VAL,) * (n_loc - len(other.locals))
         return State(
             tuple(a.join(b, K, narrow) for a, b in zip(l1, l2)),
             tuple(a.join(b, K, narrow) for a, b in zip(self.stack, other.stack)),
@@ -526,6 +534,26 @@ class State(sexpr.AsSExpr):
             for x in self.stack
         )
         return State(new_locs, stk)
+
+    def forget_elements(self, refs: Iterable[Val]) -> "State":
+        # A called method can write into the arrays it gets. After the call their
+        # elements can be anything.
+        arrays = [r for r in refs if r.is_ref]
+
+        def forget(x: Val) -> Val:
+            return replace(x, elem_iv=Interval.top())
+
+        def passed(x: Val, index: int | None = None) -> bool:
+            return any(
+                (r.src is not None and r.src in (x.src, index))
+                or (r.alloc_id is not None and r.alloc_id == x.alloc_id)
+                for r in arrays
+            )
+
+        return State(
+            tuple(forget(x) if passed(x, i) else x for i, x in enumerate(self.locals)),
+            tuple(forget(x) if passed(x) else x for x in self.stack),
+        )
 
     def update_array_elems(self, ref: Val, val_iv: Interval) -> "State":
         def _upd(x: Val) -> Val:
@@ -835,8 +863,8 @@ class UnboundedIntervalAnalysis:
                 continue
             opr = self.bc[call_pc]
             nargs = len(callee.extension.params) + (0 if isinstance(opr, jvm.InvokeStatic) else 1)
-            _, after = caller_st.pop(nargs)
-            woken.append((call_pc + 1, after.push(joined_ret)))
+            args, after = caller_st.pop(nargs)
+            woken.append((call_pc + 1, after.forget_elements(args).push(joined_ret)))
         return woken
 
     def step(self, pc: PC, state: State) -> list[tuple[PC, State] | str]:
@@ -914,17 +942,11 @@ class UnboundedIntervalAnalysis:
                 [val], after = state.pop(1)
                 match to:
                     case jvm.Short():
-                        iv = val.iv & Interval(-32768, 32767)
-                        if iv.is_bot():
-                            iv = Interval(-32768, 32767)
+                        iv = cast_interval(val.iv, Interval(-32768, 32767))
                     case jvm.Byte():
-                        iv = val.iv & Interval(-128, 127)
-                        if iv.is_bot():
-                            iv = Interval(-128, 127)
+                        iv = cast_interval(val.iv, Interval(-128, 127))
                     case jvm.Char():
-                        iv = val.iv & Interval(0, 65535)
-                        if iv.is_bot():
-                            iv = Interval(0, 65535)
+                        iv = cast_interval(val.iv, Interval(0, 65535))
                     case _:
                         iv = val.iv
                 out.append((pc + 1, after.push(Val(iv))))
@@ -1058,6 +1080,7 @@ class UnboundedIntervalAnalysis:
             case jvm.InvokeStatic(method=m):
                 nargs = len(m.extension.params)
                 args, after = state.pop(nargs)
+                after = after.forget_elements(args)
                 returns_void = m.extension.return_type is None or str(m).endswith("V")
                 try:
                     callee = self.bc.getmethod(m)
@@ -1081,6 +1104,11 @@ class UnboundedIntervalAnalysis:
             ):
                 nargs = len(m.extension.params) + 1
                 args, after = state.pop(nargs)
+                # A String cannot change, but getChars writes into a char[].
+                if m.classname.dotted() == "java.lang.String":
+                    after = after.forget_elements(args[1:])
+                else:
+                    after = after.forget_elements(args)
                 recv_arg = args[0]
                 if recv_arg.may_null:
                     out.append("null pointer")
@@ -1169,8 +1197,13 @@ class UnboundedIntervalAnalysis:
         cond_str = str(cond)
         opr = self.bc[pc]
 
-        if isinstance(opr, jvm.Ifz) and cond_str in ("eq", "ne") and self._is_ref_test(pc, a):
-            is_null_branch = cond_str == "eq"
+        # ifnull and ifnonnull have the conditions is and isnot.
+        reference_condition = cond_str in ("is", "isnot")
+        null_test = reference_condition or (
+            cond_str in ("eq", "ne") and self._is_ref_test(pc, a)
+        )
+        if isinstance(opr, jvm.Ifz) and null_test:
+            is_null_branch = cond_str in ("eq", "is")
             res: list[tuple[PC, State]] = []
             for taken in (True, False):
                 tgt_pc = (pc % target) if taken else (pc + 1)
@@ -1193,7 +1226,9 @@ class UnboundedIntervalAnalysis:
                 res.append((tgt_pc, s))
             return res
 
-        if isinstance(opr, jvm.If) and (a.may_null or b.may_null or a.is_ref or b.is_ref):
+        # if_acmpeq and if_acmpne compare references and give no int range.
+        unknown = a.may_null or b.may_null or a.is_ref or b.is_ref
+        if isinstance(opr, jvm.If) and (reference_condition or unknown):
             return [(pc % target, after), (pc + 1, after)]
 
         cmp_opr = cond if isinstance(cond, jvm.CmpOpr) else STR_TO_CMPOPR[cond_str]
