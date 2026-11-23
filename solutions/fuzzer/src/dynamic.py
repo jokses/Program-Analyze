@@ -47,6 +47,27 @@ def binary(op, v1: int, v2: int) -> int | str:
             raise NotImplementedError(f"Unhandled binary {op!r}")
 
 
+def bitwise(op: jvm.BitOpr, v1: int, v2: int) -> int:
+    # Source: https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-6.html#jvms-6.5.ishl
+    # A shift only uses the low 5 bits of v2.
+    shift = v2 & 0x1F
+    match op:
+        case jvm.BitOpr.Shl:
+            return to_int(v1 << shift)
+        case jvm.BitOpr.Shr:
+            return v1 >> shift
+        case jvm.BitOpr.Ushr:
+            # Source: https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-6.html#jvms-6.5.iushr
+            # The bits shifted in are zeros, also for a negative v1.
+            return to_int((v1 % 2**32) >> shift)
+        case jvm.BitOpr.And:
+            return v1 & v2
+        case jvm.BitOpr.Or:
+            return v1 | v2
+        case jvm.BitOpr.Xor:
+            return v1 ^ v2
+
+
 def compare(op, v1: int, v2: int) -> bool:
     match op:
         case jvm.CmpOpr.Eq:
@@ -322,7 +343,6 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
                 top_element = frame.stack.pop()
 
-
                 frame.stack.push(top_element)
                 frame.stack.push(top_element)
 
@@ -354,6 +374,13 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             else:
                 frame.stack.push(jvmc.StackInt(value))
                 frame.pc += 1
+
+        case jvm.Bitopr(type=jvm.Int(), operant=op):
+            v2, v1 = frame.stack.pop(), frame.stack.pop()
+            assert isinstance(v1, jvmc.StackInt), f"expected int, but got {v1}"
+            assert isinstance(v2, jvmc.StackInt), f"expected int, but got {v2}"
+            frame.stack.push(jvmc.StackInt(bitwise(op, v1.value, v2.value)))
+            frame.pc += 1
 
         case jvm.Return(type=t):
             is_void = (t is None)

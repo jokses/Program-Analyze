@@ -1,5 +1,5 @@
 import pytest
-from dynamic import binary, range_of, split_points
+from dynamic import binary, bitwise, range_of, split_points
 
 import jvm
 
@@ -19,6 +19,20 @@ INT_MAX = 2**31 - 1
 )
 def test_binary_follows_java(operator, left, right, expected):
     assert binary(operator, left, right) == expected
+
+
+@pytest.mark.parametrize(
+    "operator, left, right, expected",
+    [
+        (jvm.BitOpr.Shl, 1, 33, 2),
+        (jvm.BitOpr.Shl, 1, 31, INT_MIN),
+        (jvm.BitOpr.Shr, -16, 2, -4),
+        (jvm.BitOpr.Ushr, -1, 28, 15),
+        (jvm.BitOpr.Ushr, -1, 0, -1),
+    ],
+)
+def test_bitwise_follows_java(operator, left, right, expected):
+    assert bitwise(operator, left, right) == expected
 
 
 @pytest.mark.parametrize(
