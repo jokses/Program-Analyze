@@ -29,11 +29,7 @@ class AnalysisError(Exception):
     pass
 
 
-# --------------------------------------------------------------------------
-# Interval Abstract Domain (Abstraction + Lattice)
-# --------------------------------------------------------------------------
 def wrap_or_top(lo: int, hi: int) -> "Interval":
-    """Sound 32-bit signed integer wrap-or-top clamp."""
     if lo < INT_MIN or hi > INT_MAX:
         return Interval(INT_MIN, INT_MAX)
     return Interval(lo, hi)
@@ -421,9 +417,6 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
             return Interval.top()
 
 
-# --------------------------------------------------------------------------
-# Abstract Value & State
-# --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Val:
     iv: Interval
@@ -592,9 +585,6 @@ class State(sexpr.AsSExpr):
         return State(new_locs, new_stk)
 
 
-# --------------------------------------------------------------------------
-# Sound Interval Analysis Engine
-# --------------------------------------------------------------------------
 class UnboundedIntervalAnalysis:
     def __init__(self, bc: jpamb.Bytecode, entry_method: jvm.AbsMethodID, inputs: jpamb.Input | None = None):
         self.bc = bc
@@ -753,7 +743,7 @@ class UnboundedIntervalAnalysis:
         work: list[tuple[str, int, PC]] = [(str(entry_pc.method), entry_pc.offset, entry_pc)]
         queued: set[PC] = {entry_pc}
 
-        # 1. Ascending fixpoint with K-widening
+        # The fixpoint is widened with the constants K at loop heads.
         while work:
             _, _, pc = heapq.heappop(work)
             queued.discard(pc)
@@ -785,7 +775,7 @@ class UnboundedIntervalAnalysis:
                     queued.add(succ_pc)
                     heapq.heappush(work, (str(succ_pc.method), succ_pc.offset, succ_pc))
 
-        # 2. Sound descending narrowing pass
+        # Narrowing then takes back some of what widening added.
         for _ in range(2):
             incoming: dict[PC, State] = {entry_pc: init_st}
             for pc in sorted(self.states.keys(), key=lambda p: (str(p.method), p.offset)):
@@ -813,7 +803,6 @@ class UnboundedIntervalAnalysis:
         return self
 
     def may_diverge(self) -> bool:
-        """Determine whether non-termination ('*') is genuinely possible."""
         if self.has_unknown_call:
             return True
         if not self.loop_edges:
@@ -868,7 +857,6 @@ class UnboundedIntervalAnalysis:
         return woken
 
     def step(self, pc: PC, state: State) -> list[tuple[PC, State] | str]:
-        """Abstract transition function matching every instruction in the dynamic `step()`."""
         opr = self.bc[pc]
         out: list[tuple[PC, State] | str] = []
 
@@ -1271,9 +1259,6 @@ class UnboundedIntervalAnalysis:
             res.append((tgt_pc, s))
         return res
 
-    # ----------------------------------------------------------------------
-    # Sound Range-Coverage Upper Bound (Exact Match With Fuzzer Trace.ranges)
-    # ----------------------------------------------------------------------
     def reachable_range_tuples(
         self, split: str = "three", m: jvm.AbsMethodID | None = None
     ) -> frozenset[tuple[PC, int, int, int]]:
@@ -1352,10 +1337,6 @@ class UnboundedIntervalAnalysis:
             cur_iv = cur_iv & entry_st.locals[param_idx].iv
         return cur_iv
 
-
-# --------------------------------------------------------------------------
-# Programmatic Oracle for Fuzzer Integration
-# --------------------------------------------------------------------------
 @dataclass
 class RangeCoverageOracle:
     methodid: jvm.AbsMethodID
@@ -1399,9 +1380,6 @@ class RangeCoverageOracle:
         return solutions
 
 
-# --------------------------------------------------------------------------
-# JPAMB CLI Entry Points (analyse / interpret)
-# --------------------------------------------------------------------------
 def interpret():
     methodid, input_val, steps = jpamb.getcase(
         "unbounded",
