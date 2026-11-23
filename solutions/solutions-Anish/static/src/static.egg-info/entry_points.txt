@@ -1,3 +1,0 @@
-[console_scripts]
-static-analysis = static:analyse
-static-interpreter = static:interpret
