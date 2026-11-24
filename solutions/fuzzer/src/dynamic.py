@@ -682,6 +682,8 @@ class Trace:
     instructions: frozenset[jvmc.PC]
     # (pc, operand, low, high) means the operand at pc was in [low, high].
     ranges: frozenset[tuple[jvmc.PC, int, int, int]] = frozenset()
+    # The executed instructions in order.
+    path: tuple[jvmc.PC, ...] = ()
 
 
 # A site is split at the comparisons in its own method. The cache is there because
@@ -745,6 +747,7 @@ def run(
     state = initial(bc, methodid, input)
     instructions = set()
     ranges = set()
+    path = []
     points = {}
     for _ in range(max_steps):
         frame = state.frames.peek()
@@ -761,9 +764,10 @@ def run(
                     ranges.add((frame.pc, position, low, high))
         pc, state = step(bc, state)
         instructions.add(pc)
+        path.append(pc)
         if isinstance(state, str):
-            return Trace(state, frozenset(instructions), frozenset(ranges))
-    return Trace("*", frozenset(instructions), frozenset(ranges))
+            return Trace(state, frozenset(instructions), frozenset(ranges), tuple(path))
+    return Trace("*", frozenset(instructions), frozenset(ranges), tuple(path))
 
 
 # Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.3
