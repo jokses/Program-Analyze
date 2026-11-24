@@ -1282,47 +1282,48 @@ class UnboundedIntervalAnalysis:
     def solve_uncovered_range(
         self,
         target_tuple: tuple[PC, int, int, int],
+        path: tuple[PC, ...],
         param_idx: int = 0,
     ) -> Interval:
+        # We go backwards along a run that reached the target pc and undo a loop once
+        # for every time that run went through it. In divisionLoop the run divides n by
+        # 2 five times and n == 32 at the assertion gives n in [1024, 1055].
         target_pc, position, low, high = target_tuple
-        cur_iv = Interval(low, high)
-        curr = target_pc
-        tracked_local = param_idx
-        visited_states: set[tuple[PC, Interval]] = set()
-
         st_at_target = self.states.get(target_pc)
-        if st_at_target is not None:
-            ops = operands(self.bc[target_pc], st_at_target.stack)
-            if position < len(ops) and ops[position].src is not None:
-                tracked_local = ops[position].src
+        if target_pc not in path or st_at_target is None:
+            return Interval.top()
+        ops = operands(self.bc[target_pc], st_at_target.stack)
+        # Only an operand loaded straight from the parameter can be followed back.
+        if position >= len(ops) or ops[position].src != param_idx:
+            return Interval.top()
+        cur_iv = Interval(low, high)
+        tracked_local = param_idx
 
-        while curr.offset > 0 and (curr, cur_iv) not in visited_states:
-            visited_states.add((curr, cur_iv))
-            preds = self.preds.get(curr, [])
-            if not preds:
-                break
-
-            seq_preds = [p for p in preds if p.offset < curr.offset]
-            back_preds = [p for p in preds if p.offset >= curr.offset]
-            prev = seq_preds[0] if seq_preds else back_preds[0]
-
-            opr = self.bc[prev]
-            match opr:
+        before = path[: path.index(target_pc)]
+        steps = [pc for pc in before if pc.method == target_pc.method]
+        k = len(steps) - 1
+        while k >= 0:
+            match self.bc[steps[k]]:
                 case jvm.Store(index=i) if i == tracked_local:
-                    if prev.offset >= 2:
-                        bin_pc = PC(prev.method, prev.offset - 1)
-                        push_pc = PC(prev.method, prev.offset - 2)
-                        bin_opr = self.bc[bin_pc]
-                        push_opr = self.bc[push_pc]
-                        if isinstance(bin_opr, jvm.Binary) and isinstance(push_opr, jvm.Push):
-                            c = getattr(push_opr.value, "value", push_opr.value)
-                            if isinstance(c, int):
-                                cur_iv = backward_arith_left(bin_opr.operant, cur_iv, Interval.const(c))
-                                curr = push_pc
-                                continue
+                    # n = n op c is load n, push c, binary op and store n.
+                    if k < 3:
+                        return Interval.top()
+                    load, push, binary = (self.bc[pc] for pc in steps[k - 3 : k])
+                    if not (
+                        isinstance(load, jvm.Load)
+                        and load.index == tracked_local
+                        and isinstance(push, jvm.Push)
+                        and isinstance(push.type, jvm.Int)
+                        and isinstance(binary, jvm.Binary)
+                    ):
+                        return Interval.top()
+                    constant = Interval.const(push.value)
+                    cur_iv = backward_arith_left(binary.operant, cur_iv, constant)
+                    k -= 4
+                    continue
                 case jvm.Incr(index=i, amount=a) if i == tracked_local:
                     cur_iv = backward_arith_left(jvm.BinaryOpr.Add, cur_iv, Interval.const(a))
-            curr = prev
+            k -= 1
 
         entry_st = self.states.get(PC(target_pc.method, 0))
         if entry_st and param_idx < len(entry_st.locals):
