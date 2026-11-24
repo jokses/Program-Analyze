@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import argparse
 import heapq
+import json
 import sys
 import traceback
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Self
 
 from dynamic import comparisons_in_method, operands, split_points
-from syntactic_constants import MethodConstants, constants_for_method_id
+from syntactic_constants import MethodConstants
 from tools import Abstraction, Lattice
 
 import jpamb
@@ -18,6 +20,7 @@ import jvm
 import jvm.state as jvms
 import sexpr
 from jvm.state import PC
+
 
 INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
@@ -27,6 +30,38 @@ ALL_OUTCOMES = {"ok", "assertion error", "divide by zero", "null pointer", "out 
 
 class AnalysisError(Exception):
     pass
+
+
+# --------------------------------------------------------------------------
+# Syntactic constants (task ISY), read from constants.json (task NAN)
+# --------------------------------------------------------------------------
+# constants.json is generated once by the syntactic analysis:
+#     python solutions/syntactic/src/syntactic_constants.py --all --out solutions/syntactic/constants.json
+# For every method id it stores {"constants": [...], "comparisons": [...]}.
+# This file is in solutions/static/src/, so solutions/ is two folders up.
+CONSTANTS_JSON = Path(__file__).resolve().parents[2] / "syntactic" / "constants.json"
+
+_constants_table: dict[str, dict] | None = None
+
+
+def load_syntactic_constants(method_id: str) -> MethodConstants | None:
+    """Return the ISY constants of `method_id` from constants.json, or None if it is not there."""
+    global _constants_table
+    if _constants_table is None:
+        try:
+            _constants_table = json.loads(CONSTANTS_JSON.read_text())
+        except (OSError, ValueError) as e:
+            print(f"warning: could not read {CONSTANTS_JSON}: {e!r}", file=sys.stderr)
+            _constants_table = {}
+    entry = _constants_table.get(method_id)
+    if entry is None or "error" in entry:
+        # The method is missing (constants.json is older than the cases, or it is a helper
+        # method that is not a case) or the syntactic analysis failed for it.
+        # The interval analysis still works with the bytecode literals.
+        print(f"warning: no syntactic constants for {method_id} in {CONSTANTS_JSON.name}", file=sys.stderr)
+        return None
+    # Same type as the syntactic analysis returns, so with_neighbours() keeps working.
+    return MethodConstants(frozenset(entry["constants"]), frozenset(entry["comparisons"]))
 
 
 # --------------------------------------------------------------------------
@@ -585,12 +620,12 @@ class UnboundedIntervalAnalysis:
         self.has_unknown_call: bool = False
 
     def _syntactic_info(self, m: jvm.AbsMethodID, follow_calls: bool = True) -> MethodConstants | None:
+        # Integrate analyses (NAN): the constants and comparisons come from constants.json,
+        # written by the syntactic analysis (ISY), instead of parsing the Java source again here.
+        # constants.json is generated with follow_calls=True (the default of syntactic_constants).
         key = (m, follow_calls)
         if key not in self.syntactic_cache:
-            try:
-                self.syntactic_cache[key] = constants_for_method_id(m.encode(), follow_calls=follow_calls)
-            except (ValueError, OSError):
-                self.syntactic_cache[key] = None
+            self.syntactic_cache[key] = load_syntactic_constants(m.encode())
         return self.syntactic_cache[key]
 
     def initial_fuzzer_constants(self, m: jvm.AbsMethodID | None = None, neighbours: bool = True) -> list[int]:
