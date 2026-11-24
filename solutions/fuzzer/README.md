@@ -6,19 +6,53 @@ The fuzzer has three versions, `random`, `instruction` and `range`. All of them 
 
 ## Running
 
-From the root of the repository with the venv from `docs/python.md`:
+Run everything from the root of the repository. First make the venv from `docs/python.md` and install JPAMB and the fuzzer in it. On Windows the second line is `.jpamb-eval\Scripts\Activate.ps1`.
 
 ```bash
+uv venv --no-project --clear --prompt jpamb-eval .jpamb-eval
+source .jpamb-eval/bin/activate
+uv pip install --editable .
 uv pip install --editable solutions/fuzzer
-fuzzer 'jpamb.cases.Dependent.divisionLoop:(I)V' --seeds 10 --out divisionLoop.jsonl
-fuzzer --all --seeds 1 --split boundary --out all.jsonl
-fuzzer-checks divisionLoop.jsonl all.jsonl
-python -m pytest solutions/fuzzer/tests
 ```
 
-`fuzzer` writes one JSON line per method, version and seed. `fuzzer-checks` prints what we look at for `divisionLoop` and `arraySumIsLarge` and the runs that crashed or hit 100,000 runs.
+Fuzz one method with all three versions and 10 seeds, and print the summary:
+
+```bash
+fuzzer 'jpamb.cases.Arrays.arraySumIsLarge:([I)V' --out arraySumIsLarge.jsonl
+fuzzer-checks arraySumIsLarge.jsonl
+```
+
+Fuzz every method in `target/stats/cases.txt` with one seed. This took about 3 minutes on our machine:
+
+```bash
+fuzzer --all --seeds 1 --out all.jsonl
+fuzzer-checks all.jsonl
+```
+
+`fuzzer` writes one JSON line for each method, version and seed. A line has the number of runs, the CPU time, why the version stopped, the outcomes, the instructions and ranges it covered and the inputs it kept.
+
+`fuzzer-checks` prints one line for each method, split and version, over all its seeds:
+
+- the number of seeds, the median number of runs and the median CPU seconds, with the analysis for `range` under `fuzzer-with-bound`
+- how many seeds stopped for each reason
+- the outcomes JPAMB lists for the method that a seed did not find, and in how many seeds. "(with *)" means the seed also hit the step limit and may have found the outcome with more steps.
+- with a bound, the median number of covered ranges out of the bound, and how many covered ranges fall outside the bound. That last number should be 0.
+
+Under a method it also prints, for each range of it in `designed_ranges.json`, in how many seeds that range was reached. The file has the ranges our methods are written to reach, with the pc from `jpamb inspect`. Before the table it lists the methods that crash, with the error.
+
+`--split boundary` changes the split points (see the notes below), `--versions range` runs only the range version and `fuzzer --help` lists all the options.
+
+Run the tests, and check the interpreter against JPAMB:
+
+```bash
+uv pip install pytest hypothesis
+python -m pytest solutions/fuzzer/tests
+jpamb interpret fuzzer-interpreter
+```
 
 ## Notes
+
+The interpreter gets 213 of 266 on JPAMB 0.10. The 53 cases it fails are in `Randomness` with `Smith` inputs, and in `Strings`, `CWE470` and `CWE502` with string methods like `startsWith`, `invokedynamic` and casts. We do not support those.
 
 - We record ranges at comparisons, `idiv`, `irem` and array indices.
 - The split points are 0 and the constants the method compares with. We get these from Adriana's syntactic analysis. `--split three` is the default and gives < c, = c and > c. `--split boundary` also gives c-1 and c+1 their own range.
