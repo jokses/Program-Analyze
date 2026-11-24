@@ -139,6 +139,23 @@ public class Runtime {
     return rparams;
   }
 
+  private static String mapThrowableToOutcome(Throwable t) {
+    if (t instanceof ArithmeticException) {
+      return "divide_by_zero";
+    }
+    if (t instanceof AssertionError) {
+      return "assertion_error";
+    }
+    if (t instanceof NullPointerException) {
+      return "null_pointer";
+    }
+    if (t instanceof IndexOutOfBoundsException) {
+      return "out_of_bounds";
+    }
+    System.err.println("Unhandled throwable: " + t);
+    return t.getClass().getSimpleName();
+  }
+
   public static void main(String[] args)
       throws ClassNotFoundException, NoSuchMethodException, IllegalAccessException {
     if (args.length == 0) {
@@ -168,17 +185,33 @@ public class Runtime {
       if (!Modifier.isStatic(m.getModifiers())) {
         throw new RuntimeException("Expected " + pattern + " to be static");
       }
-      for (int i = 1; i < args.length; i++) {
-        Object[] params = InputParser.parse(args[i]);
-        System.err.printf("Running %s with %s%n", m, Arrays.toString(params));
-        try {
-          m.invoke(null, params);
-        } catch (InvocationTargetException e) {
-          System.out.println(ResultType.fromThrowable(e.getCause()));
-          return;
+
+      List<Object[]> argBatches = new ArrayList<>();
+      if (args.length == 1) {
+        argBatches.add(new Object[0]);
+      } else {
+        for (int i = 1; i < args.length; i++) {
+          argBatches.add(InputParser.parse(args[i]));
         }
       }
-      System.out.println(ResultType.SUCCESS);
+
+      for (Object[] params : argBatches) {
+        System.err.printf("Running %s with %s%n", m, Arrays.toString(params));
+        String outcome = "ok";
+        try {
+          m.invoke(null, params);
+          outcome = "ok";
+        } catch (InvocationTargetException e) {
+          Throwable cause = e.getCause() != null ? e.getCause() : e;
+          outcome = mapThrowableToOutcome(cause);
+        } catch (Throwable t) {
+          outcome = mapThrowableToOutcome(t);
+        }
+        InstrumentationAgent.recordOutcome(outcome);
+      }
+
+      System.out.println("DYNAMIC_OUTCOMES:" + String.join(",", InstrumentationAgent.OBSERVED_OUTCOMES));
+      System.out.println(InstrumentationAgent.dumpSummary());
     }
   }
 }
