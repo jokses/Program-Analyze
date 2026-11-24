@@ -586,10 +586,19 @@ class State(sexpr.AsSExpr):
 
 
 class UnboundedIntervalAnalysis:
-    def __init__(self, bc: jpamb.Bytecode, entry_method: jvm.AbsMethodID, inputs: jpamb.Input | None = None):
+    def __init__(
+        self,
+        bc: jpamb.Bytecode,
+        entry_method: jvm.AbsMethodID,
+        inputs: jpamb.Input | None = None,
+        param_ivs: dict[int, Interval] | None = None,
+    ):
         self.bc = bc
         self.entry_method = entry_method
         self.inputs = inputs
+        # The binary search in extension.py narrows int parameters, like n in
+        # [-2**31, -1], the lower half of all ints.
+        self.param_ivs = param_ivs or {}
         self.syntactic_cache: dict[tuple[jvm.AbsMethodID, bool], MethodConstants | None] = {}
         self.K_cache: dict[jvm.AbsMethodID, set[int]] = {}
         self.headers_cache: dict[jvm.AbsMethodID, set[int]] = {}
@@ -726,6 +735,8 @@ class UnboundedIntervalAnalysis:
                     case _:
                         locs[i] = Val(Interval.top(), may_null=True, may_nonnull=True, is_ref=True)
 
+        for i, iv in self.param_ivs.items():
+            locs[i] = replace(locs[i], iv=locs[i].iv & iv)
         return State(tuple(locs), ())
 
     def run(self) -> "UnboundedIntervalAnalysis":
