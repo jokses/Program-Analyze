@@ -11,8 +11,7 @@ INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
 
 
-# this method will handle if overflow for the java integers should happen.
-# It selects either the very top of the interval or it wraps which circles the interval
+# If the result can leavhe the 32-bit range, ho to top.
 def wrap_or_top(lo, hi) -> "Interval":
     if lo < INT_MIN or hi > INT_MAX:
         return Interval(INT_MIN, INT_MAX)
@@ -64,7 +63,7 @@ class Interval(Abstraction, Lattice):
             return other
         elif other.is_bot():
             return self
-        return wrap_or_top(min(self.min, other.min), max(self.max, other.max))
+        return Interval(min(self.min, other.min), max(self.max, other.max))
 
     def __and__(self, other: "Interval") -> "Interval":
         maxVal = min(self.max, other.max)
@@ -96,6 +95,10 @@ class Interval(Abstraction, Lattice):
     def arithmetic(
         self, other: "Interval", opr: jvm.BinaryOpr
     ) -> list["Interval | str"]:
+
+        if self.is_bot() or other.is_bot():
+            return [Interval.bot()]
+
         min1 = self.min
         max1 = self.max
         min2 = other.min
@@ -232,12 +235,23 @@ class Interval(Abstraction, Lattice):
                 na = self & other
                 nb = self & other
             case jvm.CmpOpr.Ne:  # x != y
-                na = self
-                nb = other
+                na = Interval.remove_endpoint(self, other)
+                nb = Interval.remove_endpoint(other, self)
             case _:
                 raise NotImplementedError(f"TODO: {opr}")
 
         return na, nb
+
+    @staticmethod
+    def remove_endpoint(a: "Interval", b: "Interval") -> "Interval":
+        if b.min != b.max:
+            return a
+        c = b.min
+        if a.min == c:
+            return Interval(a.min + 1, a.max)
+        if a.max == c:
+            return Interval(a.min, a.max - 1)
+        return a
 
     def widen(self, other: "Interval", K: set) -> "Interval":
         if self.is_bot():
@@ -273,12 +287,12 @@ class Interval(Abstraction, Lattice):
         return Interval(new_min, new_max)
 
     def split(self, K: set) -> list:
-        min = self.min
-        max = self.max
+        lo = self.min
+        hi = self.max
 
-        KSorted = sorted(k for k in K if min <= k <= max)
+        KSorted = sorted(k for k in K if lo <= k <= hi)
 
-        cursor = min
+        cursor = lo
         interval_list = list()
         for k in KSorted:
             if cursor < k:
@@ -286,7 +300,7 @@ class Interval(Abstraction, Lattice):
             interval_list.append(Interval(k, k))
             cursor = k + 1
 
-        if cursor <= max:
-            interval_list.append(Interval(cursor, max))
+        if cursor <= hi:
+            interval_list.append(Interval(cursor, hi))
 
         return interval_list
