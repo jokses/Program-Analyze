@@ -1,15 +1,17 @@
 import json
+import statistics
 import sys
-
-from dynamic import to_int
+from collections import defaultdict
 
 import jpamb
 
-DIVISION_LOOP = "jpamb.cases.Dependent.divisionLoop:(I)V"
-ARRAY_SUM_IS_LARGE = "jpamb.cases.Arrays.arraySumIsLarge:([I)V"
-# n != 32 and sum > 300, found in target/decompiled/jpamb/cases
-DIVISION_LOOP_ASSERTION = DIVISION_LOOP + ":15"
-ARRAY_SUM_COMPARISON = ARRAY_SUM_IS_LARGE + ":20"
+
+def expected_outcomes() -> dict[str, set[str]]:
+    suite, eff = jpamb.setup()
+    expected = defaultdict(set)
+    for case in suite.cases(eff=eff):
+        expected[case.methodid.encode()].add(case.result)
+    return expected
 
 
 def main():
@@ -17,25 +19,46 @@ def main():
     for file in sys.argv[1:]:
         with open(file) as lines:
             rows += [json.loads(line) for line in lines]
+    expected = expected_outcomes()
 
+    groups = defaultdict(list)
+    crashes = defaultdict(int)
     for row in rows:
-        name = (row["split"], row["version"], row["seed"])
-        if row["stop_reason"] in ("crash", "max runs"):
-            print(row["method"], *name, row["stop_reason"], row["error"])
-        elif row["method"] == DIVISION_LOOP:
-            covered = sum(pc.startswith(DIVISION_LOOP) for pc in row["instructions"])
-            reached = [DIVISION_LOOP_ASSERTION, 0, 32, 32] in row["ranges"]
-            print("divisionLoop", *name, covered, reached, row["stop_reason"])
-        elif row["method"] == ARRAY_SUM_IS_LARGE:
-            sums = [
-                (low, high)
-                for pc, position, low, high in row["ranges"]
-                if pc == ARRAY_SUM_COMPARISON and position == 0
-            ]
-            # Java ints wrap around, also in the sum.
-            kept = [
-                to_int(sum(value.values))
-                for kept_input in row["kept_inputs"]
-                for value in jpamb.case.Input.decode(kept_input).values
-            ]
-            print("arraySumIsLarge", *name, sums, 301 in kept)
+        if row["stop_reason"] == "crash":
+            crashes[(row["method"], row["error"])] += 1
+        else:
+            groups[(row["method"], row["split"], row["version"])].append(row)
+    for (method, error), count in sorted(crashes.items()):
+        print("crash", method, count, "rows", error)
+
+    print("method split version seeds runs seconds stops missed bound outside")
+    for (method, split, version), runs in sorted(groups.items()):
+        stops = defaultdict(int)
+        missed = defaultdict(int)
+        for row in runs:
+            stops[row["stop_reason"]] += 1
+            for outcome in expected[method] - set(row["outcomes"]):
+                # A run that hit the step limit may have reached the outcome later.
+                missed[outcome + (" (with *)" if "*" in row["outcomes"] else "")] += 1
+        # Only the range version uses the bound.
+        seconds = [
+            row["cpu_seconds"] + (row["analysis_seconds"] if version == "range" else 0)
+            for row in runs
+        ]
+        bound = "-"
+        if runs[0]["bound_size"] is not None:
+            covered = [row["bound_size"] - row["bound_not_covered"] for row in runs]
+            bound = f"{statistics.median(covered)}/{runs[0]['bound_size']}"
+        outside = sum(len(row["outside_bound"]) for row in runs)
+        print(
+            method,
+            split,
+            version,
+            len(runs),
+            statistics.median(row["runs"] for row in runs),
+            round(statistics.median(seconds), 3),
+            dict(stops),
+            dict(missed),
+            bound,
+            outside,
+        )
