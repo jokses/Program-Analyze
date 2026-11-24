@@ -21,6 +21,7 @@ static-interpreter = "static:interpret"
 static-analysis = "static:analyse"
 fuzzer-with-bound = "evaluation:main"
 fuzzer-extension = "extension:main"
+fuzzer-results = "results:main"
 
 [tool.uv.sources]
 fuzzer = { path = "../fuzzer", editable = true }
