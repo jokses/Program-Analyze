@@ -61,6 +61,8 @@ class Result:
     # Ranges the fuzzer reached that the bound rules out. Any of them means the bound
     # is wrong.
     outside_bound: tuple[tuple[str, int, int, int], ...] = ()
+    # The run that first reached each goal, for the goals that were reached.
+    goal_runs: tuple[tuple[str, int, int, int, int], ...] = ()
     error: str | None = None
 
 
@@ -72,6 +74,8 @@ def fuzz(
     seed: int,
     split: str,
     bound: frozenset | None = None,
+    max_runs_since_new: int = MAX_RUNS_SINCE_NEW,
+    goals: frozenset = frozenset(),
 ) -> Result:
     # The same method, version and seed give the same inputs.
     rand = random.Random(f"{methodid.encode()}|{version}|{seed}")
@@ -90,6 +94,7 @@ def fuzz(
     outcomes = set()
     runs = 0
     last_new_run = 0
+    goal_runs = {}
     start = time.process_time()
     while True:
         if first_codes:
@@ -108,6 +113,8 @@ def fuzz(
         outcomes.add(trace.outcome)
         instructions |= trace.instructions
         ranges |= trace.ranges
+        for goal in (goals - goal_runs.keys()) & trace.ranges:
+            goal_runs[goal] = runs
         if version == "instruction":
             coverage = trace.instructions
         else:
@@ -123,10 +130,12 @@ def fuzz(
             reason = "full instruction coverage"
         elif version == "range" and bound is not None and bound <= ranges:
             reason = "ranges meet the bound"
+        elif goals and len(goal_runs) == len(goals):
+            reason = "goals reached"
         elif not params:
             # Without parameters every run is the same.
             reason = "no parameters"
-        elif runs - last_new_run >= MAX_RUNS_SINCE_NEW:
+        elif runs - last_new_run >= max_runs_since_new:
             reason = "no new coverage"
         elif runs >= MAX_RUNS:
             reason = "max runs"
@@ -151,6 +160,11 @@ def fuzz(
             bound_size=None if bound is None else len(bound),
             bound_not_covered=None if bound is None else len(bound - ranges),
             outside_bound=() if bound is None else encode(ranges - bound),
+            goal_runs=tuple(
+                sorted(
+                    (pc.encode(), *rest, run) for (pc, *rest), run in goal_runs.items()
+                )
+            ),
         )
 
 
