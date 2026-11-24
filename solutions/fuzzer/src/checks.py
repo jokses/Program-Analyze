@@ -2,8 +2,15 @@ import json
 import statistics
 import sys
 from collections import defaultdict
+from pathlib import Path
+
+from dynamic import comparisons_in_method, range_of, split_points
 
 import jpamb
+import jvm
+
+# The ranges our methods are written to reach. The pcs are from `jpamb inspect`.
+DESIGNED_RANGES = Path(__file__).resolve().parents[1] / "designed_ranges.json"
 
 
 def expected_outcomes() -> dict[str, set[str]]:
@@ -14,12 +21,36 @@ def expected_outcomes() -> dict[str, set[str]]:
     return expected
 
 
+# A split shows a designed range when its range around the low end lies inside it.
+# With "three" the range around 301 is [301, 2**31 - 1] and only "boundary" shows
+# sum == 301.
+def shown(designed, split) -> bool:
+    methodid = jvm.AbsMethodID.decode(designed["method"])
+    points = split_points(comparisons_in_method(methodid), split)
+    low, high = range_of(designed["low"], points)
+    return designed["low"] <= low and high <= designed["high"]
+
+
+def reached(row, designed) -> bool:
+    pc = f"{designed['method']}:{designed['pc']}"
+    return any(
+        site == pc
+        and operand == designed["operand"]
+        and designed["low"] <= low
+        and high <= designed["high"]
+        for site, operand, low, high in row["ranges"]
+    )
+
+
 def main():
     rows = []
     for file in sys.argv[1:]:
         with open(file) as lines:
             rows += [json.loads(line) for line in lines]
     expected = expected_outcomes()
+    designed_ranges = defaultdict(list)
+    for designed in json.loads(DESIGNED_RANGES.read_text()):
+        designed_ranges[designed["method"]].append(designed)
 
     groups = defaultdict(list)
     crashes = defaultdict(int)
@@ -62,3 +93,9 @@ def main():
             bound,
             outside,
         )
+        for designed in designed_ranges[method]:
+            if shown(designed, split):
+                count = sum(reached(row, designed) for row in runs)
+                print(f"  {designed['what']} in {count} of {len(runs)} seeds")
+            else:
+                print(f"  {designed['what']} cannot be seen with {split}")
