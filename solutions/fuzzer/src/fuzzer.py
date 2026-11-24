@@ -177,28 +177,32 @@ def all_methods(suite: jpamb.Suite, *, eff: jpamb.Effect) -> list[jvm.AbsMethodI
     return [methods[name] for name in sorted(methods)]
 
 
+# The options fuzzer and fuzzer-extension share, and the methods they choose.
+def parse_methods(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        "methods", nargs="*", help="like 'jpamb.cases.Simple.assertFalse:()V'"
+    )
+    parser.add_argument("--all", action="store_true", help="every method in cases.txt")
+    parser.add_argument("--seeds", type=int, default=10)
+    parser.add_argument("--split", choices=["three", "boundary"], default="three")
+    parser.add_argument("--out", help="the JSON lines file, instead of stdout")
+    args = parser.parse_args()
+    suite, eff = jpamb.setup()
+    if args.all:
+        methods = all_methods(suite, eff=eff)
+    else:
+        methods = [jvm.AbsMethodID.decode(name) for name in args.methods]
+    return args, jpamb.Bytecode(suite, eff, {}), methods
+
+
 # bound_of(bc, methodid, split) gives the ranges the interval analysis can reach, in
 # the format of Trace.ranges. The analysis passes it in because it depends on the fuzzer.
 def main(bound_of=None):
     parser = argparse.ArgumentParser(
         description="Fuzz JPAMB methods and write one JSON row per method, version and seed."
     )
-    parser.add_argument(
-        "methods", nargs="*", help="like 'jpamb.cases.Simple.assertFalse:()V'"
-    )
-    parser.add_argument("--all", action="store_true", help="every method in cases.txt")
     parser.add_argument("--versions", default=",".join(VERSIONS))
-    parser.add_argument("--seeds", type=int, default=10)
-    parser.add_argument("--split", choices=["three", "boundary"], default="three")
-    parser.add_argument("--out", help="the JSON lines file, instead of stdout")
-    args = parser.parse_args()
-
-    suite, eff = jpamb.setup()
-    bc = jpamb.Bytecode(suite, eff, {})
-    if args.all:
-        methods = all_methods(suite, eff=eff)
-    else:
-        methods = [jvm.AbsMethodID.decode(name) for name in args.methods]
+    args, bc, methods = parse_methods(parser)
 
     # Absolute menace of a loop composition as this would never ever be acceptable theoretically but it works pratically.
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
