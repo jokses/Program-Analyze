@@ -518,32 +518,19 @@ def _step_outliers_arith(a_out, b_out, opr: jvm.BinaryOpr) -> tuple[set[str], ob
     return errs, acc
 
 
-def _step_outliers_unary_map(out, fn) -> object | None:
-    if IntervalOutliers is None or out is None:
-        return None
-    if out.is_bot():
-        return IntervalOutliers.bot()
+# -INT_MIN does not fit, and Java gives INT_MIN back.
+def negate_interval(iv: Interval) -> Interval:
+    if iv.is_bot():
+        return iv
+    return wrap_or_top(-iv.max, -iv.min)
 
+
+# Each piece goes through the same function as the interval. Trying only some values
+# of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
+def map_pieces(out, fn):
     abs_iv_cls = type(IntervalOutliers.bot().iv)
-    mapped_pieces = []
-    for piece in out.pieces():
-        if piece.min == piece.max:
-            val = fn(piece.min)
-            if INT_MIN <= val <= INT_MAX:
-                mapped_pieces.append(abs_iv_cls(val, val))
-        else:
-            samples = [
-                fn(piece.min),
-                fn(piece.max),
-                fn((piece.min + piece.max) // 2),
-            ]
-            lo = max(INT_MIN, min(samples))
-            hi = min(INT_MAX, max(samples))
-            if lo <= hi:
-                mapped_pieces.append(abs_iv_cls(lo, hi))
-    if not mapped_pieces:
-        return IntervalOutliers.bot()
-    return IntervalOutliers.make(mapped_pieces)
+    pieces = (fn(Interval(piece.min, piece.max)) for piece in out.pieces())
+    return IntervalOutliers.make(abs_iv_cls(p.min, p.max) for p in pieces)
 
 
 @dataclass(frozen=True)
@@ -1175,12 +1162,8 @@ class UnboundedIntervalAnalysis:
 
             case jvm.Negate():
                 [val], after = state.pop(1)
-                iv = (
-                    wrap_or_top(-val.iv.max, -val.iv.min)
-                    if not val.iv.is_bot()
-                    else Interval.bot()
-                )
-                neg_out = _step_outliers_unary_map(val.eff_out, lambda x: -x)
+                iv = negate_interval(val.iv)
+                neg_out = map_pieces(val.eff_out, negate_interval)
                 red_iv, red_out = reduce_pair(iv, neg_out)
                 out.append((pc + 1, after.push(Val(red_iv, out=red_out))))
 
@@ -1188,21 +1171,15 @@ class UnboundedIntervalAnalysis:
                 [val], after = state.pop(1)
                 match to:
                     case jvm.Short():
-                        iv = cast_interval(val.iv, Interval(-32768, 32767))
-                        cast_out = _step_outliers_unary_map(
-                            val.eff_out, lambda x: ((x + 32768) % 65536) - 32768
-                        )
+                        target = Interval(-32768, 32767)
                     case jvm.Byte():
-                        iv = cast_interval(val.iv, Interval(-128, 127))
-                        cast_out = _step_outliers_unary_map(
-                            val.eff_out, lambda x: ((x + 128) % 256) - 128
-                        )
+                        target = Interval(-128, 127)
                     case jvm.Char():
-                        iv = cast_interval(val.iv, Interval(0, 65535))
-                        cast_out = _step_outliers_unary_map(val.eff_out, lambda x: x & 0xFFFF)
+                        target = Interval(0, 65535)
                     case _:
-                        iv = val.iv
-                        cast_out = val.eff_out
+                        target = Interval.top()
+                iv = cast_interval(val.iv, target)
+                cast_out = map_pieces(val.eff_out, lambda piece: cast_interval(piece, target))
                 red_iv, red_out = reduce_pair(iv, cast_out)
                 out.append((pc + 1, after.push(Val(red_iv, out=red_out))))
 

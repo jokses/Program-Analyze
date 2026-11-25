@@ -1,7 +1,18 @@
 from pathlib import Path
 
 import dynamic
-from unbounded import Interval, RangeCoverageOracle, State, Val
+import pytest
+from unbounded import (
+    INT_MIN,
+    Interval,
+    RangeCoverageOracle,
+    State,
+    Val,
+    cast_interval,
+    map_pieces,
+    negate_interval,
+    outliers_from_interval,
+)
 
 import jpamb
 import jvm
@@ -43,3 +54,25 @@ def test_backwards_through_the_loop_in_division_loop():
     assert oracle.analysis.solve_uncovered_range(target, run.path) == Interval(
         1024, 1055
     )
+
+
+def to_byte(iv):
+    return cast_interval(iv, Interval(-128, 127))
+
+
+def to_char(iv):
+    return cast_interval(iv, Interval(0, 65535))
+
+
+# The value Java gives has to be in the outliers after the operation.
+@pytest.mark.parametrize(
+    ("operation", "low", "high", "java"),
+    [
+        (negate_interval, INT_MIN, INT_MIN, INT_MIN),
+        (to_byte, 0, 300, 127),
+        (to_char, -1, 5, 0),
+    ],
+)
+def test_outlier_pieces_keep_the_value_java_gives(operation, low, high, java):
+    out = map_pieces(outliers_from_interval(Interval(low, high)), operation)
+    assert out.hasValue(java)
