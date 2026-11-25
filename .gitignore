@@ -9,6 +9,8 @@ target/test-classes/
 __pycache__
 
 result.json
+*.jsonl
+results/
 .venv
 
 reports/
