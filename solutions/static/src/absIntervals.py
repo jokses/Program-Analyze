@@ -11,7 +11,7 @@ INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
 
 
-# If the result can leavhe the 32-bit range, ho to top.
+# If the result can leave the 32-bit range, go to top.
 def wrap_or_top(lo, hi) -> "Interval":
     if lo < INT_MIN or hi > INT_MAX:
         return Interval(INT_MIN, INT_MAX)
