@@ -31,15 +31,18 @@ def shown(designed, split) -> bool:
     return designed["low"] <= low and high <= designed["high"]
 
 
-def reached(row, designed) -> bool:
-    pc = f"{designed['method']}:{designed['pc']}"
-    return any(
-        site == pc
+def inside(covered, designed) -> bool:
+    site, operand, low, high = covered
+    return (
+        site == f"{designed['method']}:{designed['pc']}"
         and operand == designed["operand"]
         and designed["low"] <= low
         and high <= designed["high"]
-        for site, operand, low, high in row["ranges"]
     )
+
+
+def reached(row, designed) -> bool:
+    return any(inside(covered, designed) for covered in row["ranges"])
 
 
 def main():

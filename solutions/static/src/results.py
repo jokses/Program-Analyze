@@ -1,4 +1,5 @@
 import json
+import math
 import statistics
 import sys
 from collections import defaultdict
@@ -34,6 +35,24 @@ def median(values):
     return statistics.median(values) if values else "-"
 
 
+# Source: https://www.stat.umn.edu/geyer/5601/examp/sign.html
+# The one-sided sign test: the chance that range wins at least this many of the n
+# paired seeds when both versions are equally good. A tie counts against range.
+def sign_test(wins: int, n: int) -> float:
+    return sum(math.comb(n, k) for k in range(wins, n + 1)) / 2**n if n else 1.0
+
+
+# A pair is one run of each version with the same seed number. The random inputs
+# still differ, because fuzz seeds them with the version too so the two runs of a
+# pair are independent.
+def paired(groups, method, first, second):
+    firsts = {row["seed"]: row for row in groups[(method, first)]}
+    seconds = {row["seed"]: row for row in groups[(method, second)]}
+    return [
+        (firsts[seed], seconds[seed]) for seed in sorted(firsts.keys() & seconds.keys())
+    ]
+
+
 def rows_of(groups, version):
     return [
         row
@@ -59,19 +78,38 @@ def fuzzer_numbers(bc, rows):
         and has_unreachable_code(bc, jvm.AbsMethodID.decode(method))
     ]
     ratios = []
+    earlier = pairs = 0
     for method in unreachable:
-        instruction = median(row["runs"] for row in groups[(method, "instruction")])
-        range_ = median(row["runs"] for row in groups[(method, "range")])
-        # A version with only crash rows has no median.
-        if "-" in (instruction, range_):
+        seeds = paired(groups, method, "instruction", "range")
+        # A version with only crash rows has no pair.
+        if not seeds:
             continue
-        ratios.append(instruction / range_)
-        print(f"  {method}: instruction {instruction} runs, range {range_} runs")
+        instruction = [first["runs"] for first, _ in seeds]
+        range_ = [second["runs"] for _, second in seeds]
+        ratios.append(median(instruction) / median(range_))
+        earlier += sum(
+            range_runs < instruction_runs
+            for instruction_runs, range_runs in zip(instruction, range_)
+        )
+        pairs += len(seeds)
+        print(
+            f"  {method}: instruction {median(instruction)} runs"
+            f" [{min(instruction)}, {max(instruction)}],"
+            f" range {median(range_)} runs [{min(range_)}, {max(range_)}]"
+        )
     print(
         "methods with parameters and unreachable code",
         len(unreachable),
         "median runs of instruction / range",
         median(ratios),
+    )
+    print(
+        "range stops earlier than instruction in",
+        earlier,
+        "of",
+        pairs,
+        "paired seeds, sign test p =",
+        f"{sign_test(earlier, pairs):.2g}",
     )
 
     full = [
@@ -101,6 +139,23 @@ def fuzzer_numbers(bc, rows):
         len(full),
         "of them where range reaches ranges the others never reach",
         only_range,
+    )
+    # In a pair, range wins when it reaches more ranges that instruction
+    # misses than the other way around.
+    more = pairs = 0
+    for method in full:
+        for instruction, range_row in paired(groups, method, "instruction", "range"):
+            by_instruction = {tuple(covered) for covered in instruction["ranges"]}
+            by_range = {tuple(covered) for covered in range_row["ranges"]}
+            more += len(by_range - by_instruction) > len(by_instruction - by_range)
+            pairs += 1
+    print(
+        "on those methods range reaches more ranges than instruction in",
+        more,
+        "of",
+        pairs,
+        "paired seeds, sign test p =",
+        f"{sign_test(more, pairs):.2g}",
     )
 
     expected = checks.expected_outcomes()
@@ -140,6 +195,16 @@ def fuzzer_numbers(bc, rows):
         )
 
     range_rows = rows_of(groups, "range")
+    # Stopping on the bound is only safe if no seed that did so missed an outcome.
+    on_bound = [
+        row for row in range_rows if row["stop_reason"] == "ranges meet the bound"
+    ]
+    print(
+        "range seeds that stopped on the bound and missed a listed outcome",
+        sum(bool(expected[row["method"]] - set(row["outcomes"])) for row in on_bound),
+        "of",
+        len(on_bound),
+    )
     covered = median(
         (row["bound_size"] - row["bound_not_covered"]) / row["bound_size"]
         for row in range_rows
@@ -154,10 +219,38 @@ def fuzzer_numbers(bc, rows):
     print("covered ranges outside the bound, all versions", outside)
 
 
+# For each designed range left uncovered, like n == 32 in divisionLoop, in how many
+# seeds each way reached it and with how many runs.
+def designed_numbers(rows):
+    for designed in json.loads(checks.DESIGNED_RANGES.read_text()):
+        targets = [
+            row
+            for row in rows
+            if "error" not in row and checks.inside(row["target"], designed)
+        ]
+        # A split that cannot show the range gives no targets.
+        if not targets:
+            continue
+        for way in ("backwards", "binary_search", "longer"):
+            runs = [row[way] for row in targets if row[way] is not None]
+            print(
+                designed["what"],
+                way,
+                "reached in",
+                len(runs),
+                "of",
+                len(targets),
+                "seeds, median runs",
+                median(runs),
+            )
+
+
 # fuzzer-results RUNS.jsonl [EXTENSION.jsonl] prints the numbers the proposal asks for.
 def main():
     suite, eff = jpamb.setup()
     bc = jpamb.Bytecode(suite, eff, {})
     fuzzer_numbers(bc, load(sys.argv[1]))
     if len(sys.argv) > 2:
-        extension.summary(load(sys.argv[2]), sys.stdout)
+        rows = load(sys.argv[2])
+        extension.summary(rows, sys.stdout)
+        designed_numbers(rows)
