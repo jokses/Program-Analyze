@@ -35,26 +35,20 @@ class AnalysisError(Exception):
     pass
 
 
+# The ISY constants of every case, written by
+# python solutions/syntactic/src/syntactic_constants.py --all --out solutions/syntactic/constants.json
 CONSTANTS_JSON = Path(__file__).resolve().parents[2] / "syntactic" / "constants.json"
 
-_constants_table: dict[str, dict] | None = None
+
+@functools.cache
+def syntactic_table() -> dict[str, dict]:
+    return json.loads(CONSTANTS_JSON.read_text())
 
 
+# The methods a case calls are not cases themselves and are not in the file.
 def load_syntactic_constants(method_id: str) -> MethodConstants | None:
-    """Return the ISY constants of `method_id` from constants.json, or None if it is not there."""
-    global _constants_table
-    if _constants_table is None:
-        try:
-            _constants_table = json.loads(CONSTANTS_JSON.read_text())
-        except (OSError, ValueError) as e:
-            print(f"warning: could not read {CONSTANTS_JSON}: {e!r}", file=sys.stderr)
-            _constants_table = {}
-    entry = _constants_table.get(method_id)
-    if entry is None or "error" in entry:
-        print(
-            f"warning: no syntactic constants for {method_id} in {CONSTANTS_JSON.name}",
-            file=sys.stderr,
-        )
+    entry = syntactic_table().get(method_id)
+    if entry is None:
         return None
     return MethodConstants(frozenset(entry["constants"]), frozenset(entry["comparisons"]))
 
@@ -703,7 +697,6 @@ class UnboundedIntervalAnalysis:
         # The binary search in extension.py narrows int parameters, like n in
         # [-2**31, -1], the lower half of all ints.
         self.param_ivs = param_ivs or {}
-        self.syntactic_cache: dict[tuple[jvm.AbsMethodID, bool], MethodConstants | None] = {}
         self.K_cache: dict[jvm.AbsMethodID, set[int]] = {}
         self.headers_cache: dict[jvm.AbsMethodID, set[int]] = {}
         self.states: dict[PC, State] = {}
@@ -715,19 +708,11 @@ class UnboundedIntervalAnalysis:
         self.loop_edges: set[tuple[PC, PC]] = set()
         self.has_unknown_call: bool = False
 
-    def _syntactic_info(
-        self, m: jvm.AbsMethodID, follow_calls: bool = True
-    ) -> MethodConstants | None:
-        key = (m, follow_calls)
-        if key not in self.syntactic_cache:
-            self.syntactic_cache[key] = load_syntactic_constants(m.encode())
-        return self.syntactic_cache[key]
-
     def _thresholds(self, m: jvm.AbsMethodID) -> set[int]:
         if m not in self.K_cache:
             ks = {INT_MIN, INT_MAX, -1, 0, 1}
 
-            syn = self._syntactic_info(m, follow_calls=True)
+            syn = load_syntactic_constants(m.encode())
             if syn is not None:
                 ks |= set(syn.with_neighbours())
                 ks |= set(syn.comparisons)

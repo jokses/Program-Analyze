@@ -1,0 +1,1271 @@
+{
+  "jpamb.cases.Arrays.arrayContent:()V": {
+    "constants": [
+      -13,
+      0,
+      1,
+      2,
+      23,
+      100
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Arrays.arrayContentAboveMinus13:()V": {
+    "constants": [
+      -13,
+      0,
+      1,
+      2,
+      23,
+      100
+    ],
+    "comparisons": [
+      -13
+    ]
+  },
+  "jpamb.cases.Arrays.arrayFillUntilEqual:()V": {
+    "constants": [
+      0,
+      1,
+      8
+    ],
+    "comparisons": [
+      8
+    ]
+  },
+  "jpamb.cases.Arrays.arrayInBounds:()V": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Arrays.arrayIndexValue:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "comparisons": [
+      0,
+      5
+    ]
+  },
+  "jpamb.cases.Arrays.arrayIsNull:()V": {
+    "constants": [
+      1,
+      10
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Arrays.arrayIsNullLength:()V": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Arrays.arrayLength:()V": {
+    "constants": [
+      0,
+      2
+    ],
+    "comparisons": [
+      2
+    ]
+  },
+  "jpamb.cases.Arrays.arrayLoop:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      8,
+      12
+    ],
+    "comparisons": [
+      0,
+      12
+    ]
+  },
+  "jpamb.cases.Arrays.arrayNotEmpty:([I)V": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Arrays.arrayOutOfBounds:()V": {
+    "constants": [
+      0,
+      3
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Arrays.arraySometimesNull:(I)V": {
+    "constants": [
+      1,
+      10
+    ],
+    "comparisons": [
+      10
+    ]
+  },
+  "jpamb.cases.Arrays.arraySpellsHello:([C)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      101,
+      104,
+      108,
+      111
+    ],
+    "comparisons": [
+      101,
+      104,
+      108,
+      111
+    ]
+  },
+  "jpamb.cases.Arrays.arraySumIsLarge:([I)V": {
+    "constants": [
+      0,
+      1,
+      300
+    ],
+    "comparisons": [
+      300
+    ]
+  },
+  "jpamb.cases.Arrays.arraySumIsLargeInt:(I)V": {
+    "constants": [
+      0,
+      1,
+      100,
+      200,
+      301
+    ],
+    "comparisons": [
+      301
+    ]
+  },
+  "jpamb.cases.Arrays.binarySearch:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      10,
+      40
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Arrays.secretThenDivide:([C)I": {
+    "constants": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      99,
+      101,
+      114,
+      115,
+      116
+    ],
+    "comparisons": [
+      6,
+      99,
+      101,
+      114,
+      115,
+      116
+    ]
+  },
+  "jpamb.cases.BitOperations.bitshiftLeft:(I)V": {
+    "constants": [
+      4,
+      16
+    ],
+    "comparisons": [
+      16
+    ]
+  },
+  "jpamb.cases.BitOperations.bitshiftRight:(I)V": {
+    "constants": [
+      4,
+      64
+    ],
+    "comparisons": [
+      64
+    ]
+  },
+  "jpamb.cases.BitOperations.bitshiftUnsignedRight:(I)V": {
+    "constants": [
+      4,
+      64
+    ],
+    "comparisons": [
+      64
+    ]
+  },
+  "jpamb.cases.BitOperations.bitwiseAnd:(II)V": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.BitOperations.bitwiseNot:(I)V": {
+    "constants": [
+      -256
+    ],
+    "comparisons": [
+      -256
+    ]
+  },
+  "jpamb.cases.BitOperations.bitwiseOr:(II)V": {
+    "constants": [
+      256
+    ],
+    "comparisons": [
+      256
+    ]
+  },
+  "jpamb.cases.BitOperations.drawInt:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      48
+    ],
+    "comparisons": [
+      0,
+      2,
+      48
+    ]
+  },
+  "jpamb.cases.BitOperations.xor:(II)V": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.allPrimesArePositive:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.callsAssertFalse:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Calls.callsAssertFib:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      21
+    ],
+    "comparisons": [
+      0,
+      1,
+      21
+    ]
+  },
+  "jpamb.cases.Calls.callsAssertIf:(Z)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Calls.callsAssertIfWithTrue:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Calls.callsAssertTrue:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Calls.callsBowtie:(II)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.callsCallChain:(II)I": {
+    "constants": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "comparisons": [
+      0,
+      50
+    ]
+  },
+  "jpamb.cases.Calls.callsCallCycle:(II)I": {
+    "constants": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "comparisons": [
+      0,
+      50
+    ]
+  },
+  "jpamb.cases.Calls.callsCallCycleFork:(II)I": {
+    "constants": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "comparisons": [
+      0,
+      50
+    ]
+  },
+  "jpamb.cases.Calls.callsCallCycleLoop:(II)I": {
+    "constants": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "comparisons": [
+      0,
+      50
+    ]
+  },
+  "jpamb.cases.Calls.callsCallCycleNext:(II)I": {
+    "constants": [
+      0,
+      1,
+      10,
+      50
+    ],
+    "comparisons": [
+      0,
+      50
+    ]
+  },
+  "jpamb.cases.Calls.callsDiamond:(I)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.callsDumbbell:(II)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.callsTadpole:(II)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.callsWheel:(II)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Calls.divideViaHelper:(I)I": {
+    "constants": [
+      3,
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Calls.divisionThroughHelper:(II)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Dependent.badNormalizedDistance:(II)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Dependent.combinedGuidance:(III)V": {
+    "constants": [
+      2,
+      13,
+      30,
+      400,
+      900,
+      24691
+    ],
+    "comparisons": [
+      400,
+      900,
+      24691
+    ]
+  },
+  "jpamb.cases.Dependent.compareEquality:(II)V": {
+    "constants": [
+      17,
+      30,
+      100,
+      1000
+    ],
+    "comparisons": [
+      100,
+      1000
+    ]
+  },
+  "jpamb.cases.Dependent.divisionLoop:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      5,
+      32
+    ],
+    "comparisons": [
+      5,
+      32
+    ]
+  },
+  "jpamb.cases.Dependent.doubleIsAlwaysEven:(I)V": {
+    "constants": [
+      0,
+      2
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Dependent.normalizedDistance:(II)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Dependent.safeDivByN:(I)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Extended.safeDifferenceChain:(III)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Extended.safeLoopAccumulation:(III)I": {
+    "constants": [
+      0,
+      1,
+      2,
+      4
+    ],
+    "comparisons": [
+      0,
+      4
+    ]
+  },
+  "jpamb.cases.Extended.safeNestedLoopDivision:(III)I": {
+    "constants": [
+      0,
+      1,
+      3
+    ],
+    "comparisons": [
+      0,
+      3
+    ]
+  },
+  "jpamb.cases.Extended.safeSelectedDivisor:(ZIII)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Extended.unsafeComputedRemainder:(IIIII)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Extended.unsafeLoopOffsetDivisor:(IIII)I": {
+    "constants": [
+      0,
+      1,
+      2,
+      5
+    ],
+    "comparisons": [
+      0,
+      5
+    ]
+  },
+  "jpamb.cases.Extended.unsafeModeDerivedDivisor:(IIII)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Extended.unsafeNestedAffineDivisor:(IIIII)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Extended.unsafeNestedLoopDivisor:(IIIII)I": {
+    "constants": [
+      0,
+      1,
+      3
+    ],
+    "comparisons": [
+      3
+    ]
+  },
+  "jpamb.cases.Loops.decrementLoop:(I)V": {
+    "constants": [
+      0,
+      1,
+      8
+    ],
+    "comparisons": [
+      0,
+      8
+    ]
+  },
+  "jpamb.cases.Loops.doWhileDivision:(II)I": {
+    "constants": [
+      0,
+      1,
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Loops.forLoopDivision:(II)I": {
+    "constants": [
+      0,
+      1,
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Loops.forever:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Loops.loopRemainder:(II)I": {
+    "constants": [
+      0,
+      1,
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Loops.multiplicationLoop:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      4,
+      160
+    ],
+    "comparisons": [
+      4,
+      160
+    ]
+  },
+  "jpamb.cases.Loops.nestedLoop:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      3,
+      16
+    ],
+    "comparisons": [
+      2,
+      3,
+      16
+    ]
+  },
+  "jpamb.cases.Loops.neverAsserts:()V": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Loops.neverDivides:()I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Loops.safeNestedBranchDivision:(III)I": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Loops.terminates:()V": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Loops.whileLoopDivision:(II)I": {
+    "constants": [
+      0,
+      1,
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.MagicConstants.computedIndex:(I)I": {
+    "constants": [
+      0,
+      2,
+      3,
+      7
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.MagicConstants.derivedNull:(I)I": {
+    "constants": [
+      0,
+      1,
+      100
+    ],
+    "comparisons": [
+      100
+    ]
+  },
+  "jpamb.cases.MagicConstants.loopAndEquality:(I)V": {
+    "constants": [
+      0,
+      1,
+      3,
+      10,
+      70
+    ],
+    "comparisons": [
+      3,
+      70
+    ]
+  },
+  "jpamb.cases.MagicConstants.loopDoubling:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      4,
+      399
+    ],
+    "comparisons": [
+      4,
+      399
+    ]
+  },
+  "jpamb.cases.MagicConstants.loopDoublingSafe:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      4,
+      400
+    ],
+    "comparisons": [
+      4,
+      400
+    ]
+  },
+  "jpamb.cases.MagicConstants.narrowEquality:(I)V": {
+    "constants": [
+      123456789
+    ],
+    "comparisons": [
+      123456789
+    ]
+  },
+  "jpamb.cases.MagicConstants.rangeCondition:(I)V": {
+    "constants": [
+      1000,
+      1005,
+      1010
+    ],
+    "comparisons": [
+      1000,
+      1005,
+      1010
+    ]
+  },
+  "jpamb.cases.MagicConstants.squareThreshold:(I)V": {
+    "constants": [
+      625
+    ],
+    "comparisons": [
+      625
+    ]
+  },
+  "jpamb.cases.MagicConstants.squaredDivisor:(I)I": {
+    "constants": [
+      1,
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.MagicConstants.sumReachesTarget:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      84
+    ],
+    "comparisons": [
+      84
+    ]
+  },
+  "jpamb.cases.MagicConstants.tableLookup:(I)I": {
+    "constants": [
+      4,
+      8,
+      15,
+      16,
+      23,
+      42,
+      100,
+      999990
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.MagicConstants.tableLookupSafe:(I)I": {
+    "constants": [
+      0,
+      4,
+      8,
+      15,
+      16,
+      17,
+      23,
+      42,
+      100,
+      999990,
+      999995
+    ],
+    "comparisons": [
+      999990,
+      999995
+    ]
+  },
+  "jpamb.cases.MagicConstants.twoParams:(II)I": {
+    "constants": [
+      0,
+      1,
+      42,
+      100
+    ],
+    "comparisons": [
+      100
+    ]
+  },
+  "jpamb.cases.MagicConstants.twoParamsSafe:(II)I": {
+    "constants": [
+      0,
+      1,
+      43,
+      100
+    ],
+    "comparisons": [
+      100
+    ]
+  },
+  "jpamb.cases.MagicConstants.unreachableRange:(I)V": {
+    "constants": [
+      50,
+      100
+    ],
+    "comparisons": [
+      50,
+      100
+    ]
+  },
+  "jpamb.cases.Operators.branchRemainder:(ZI)I": {
+    "constants": [
+      0,
+      17
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Operators.directRemainder:(II)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Operators.divisionChain:(IIII)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Operators.multiplyForDivisor:(II)I": {
+    "constants": [
+      20
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Operators.negatedDivisor:(I)I": {
+    "constants": [
+      100
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Overflow.arrayIndexAfterOverflow:(I)I": {
+    "constants": [
+      0,
+      1,
+      4
+    ],
+    "comparisons": [
+      0,
+      4
+    ]
+  },
+  "jpamb.cases.Randomness.branchOverlap:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      1,
+      4,
+      5,
+      10
+    ],
+    "comparisons": [
+      5
+    ]
+  },
+  "jpamb.cases.Randomness.compareInts:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      0,
+      32
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Randomness.draw34Bits:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      1,
+      34
+    ],
+    "comparisons": [
+      1
+    ]
+  },
+  "jpamb.cases.Randomness.drawDependsOnArg:(ILjpamb/utils/Smith;)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.drawInCallee:(Ljpamb/utils/Smith;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.drawInt:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      0,
+      1,
+      4,
+      5,
+      10,
+      32
+    ],
+    "comparisons": [
+      0,
+      5
+    ]
+  },
+  "jpamb.cases.Randomness.drawIntOverflow:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      1,
+      31
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.loopUntilHeads:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      0,
+      1,
+      3
+    ],
+    "comparisons": [
+      3
+    ]
+  },
+  "jpamb.cases.Randomness.randomBranch:(Ljpamb/utils/Smith;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.randomIndex:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.randomNull:(Ljpamb/utils/Smith;)V": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.spinOnTails:(Ljpamb/utils/Smith;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Randomness.twoDraws:(Ljpamb/utils/Smith;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.ConstantExtractionCheck:(ILjava/lang/String;)V": {
+    "constants": [
+      1339
+    ],
+    "comparisons": [
+      1339
+    ]
+  },
+  "jpamb.cases.Simple.assertBoolean:(Z)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.assertFalse:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.assertInteger:(I)V": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Simple.assertPositive:(I)V": {
+    "constants": [
+      0
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Simple.assertTrue:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.branchDivision:(ZI)I": {
+    "constants": [
+      0,
+      10
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.checkBeforeAssert:(I)V": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Simple.checkBeforeDivideByN2:(I)I": {
+    "constants": [
+      0,
+      1,
+      10
+    ],
+    "comparisons": [
+      0,
+      10
+    ]
+  },
+  "jpamb.cases.Simple.checkBeforeDivideByN:(I)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Simple.directDivision:(II)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.divideByN:(I)I": {
+    "constants": [
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.divideByNMinus10054203:(I)I": {
+    "constants": [
+      1,
+      10054203
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.divideByZero:()I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.divideZeroByZero:(II)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.doNothing:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.earlyReturn:()I": {
+    "constants": [
+      0
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.guardedDivision:(I)I": {
+    "constants": [
+      0,
+      40
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Simple.integerRangeBoundary:(I)V": {
+    "constants": [
+      4096,
+      4098
+    ],
+    "comparisons": [
+      4096,
+      4098
+    ]
+  },
+  "jpamb.cases.Simple.justAdd:(II)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.justMulitply:(II)I": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.justReturn:()I": {
+    "constants": [
+      0
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.justReturnNothing:()V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.multiError:(Z)I": {
+    "constants": [
+      0,
+      1
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.nestedBranchDivision:(II)I": {
+    "constants": [
+      0,
+      10,
+      20
+    ],
+    "comparisons": [
+      0
+    ]
+  },
+  "jpamb.cases.Simple.nestedConstantCoverage:(III)V": {
+    "constants": [
+      -27183,
+      31337,
+      65521
+    ],
+    "comparisons": [
+      -27183,
+      31337,
+      65521
+    ]
+  },
+  "jpamb.cases.Simple.selectedDivisor:(ZII)I": {
+    "constants": [
+      30
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Simple.subtractForDivisor:(II)I": {
+    "constants": [
+      20
+    ],
+    "comparisons": []
+  },
+  "jpamb.cases.Strings.checkComplexSequence:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Strings.checkExtension:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Strings.sayHello2:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Strings.sayHello3:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Strings.sayHello:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.Tricky.collatz:(I)V": {
+    "constants": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "comparisons": [
+      0,
+      1
+    ]
+  },
+  "jpamb.cases.advanced.CWE470.strict_safe_dispatcher:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.advanced.CWE470.unsafe_dispatcher:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.advanced.CWE470.weak_dispatcher:(Ljava/lang/String;)V": {
+    "constants": [],
+    "comparisons": []
+  },
+  "jpamb.cases.advanced.CWE502.blacklist_deserialization:(Ljava/lang/String;)V": {
+    "constants": [
+      -1,
+      0,
+      1,
+      2,
+      3
+    ],
+    "comparisons": [
+      1,
+      3
+    ]
+  },
+  "jpamb.cases.advanced.CWE502.insecure_deserialization:(Ljava/lang/String;)V": {
+    "constants": [
+      -1,
+      0,
+      1,
+      2,
+      3
+    ],
+    "comparisons": [
+      1,
+      3
+    ]
+  },
+  "jpamb.cases.advanced.CWE502.whitelist_deserialization:(Ljava/lang/String;)V": {
+    "constants": [
+      -1,
+      0,
+      1,
+      2,
+      3
+    ],
+    "comparisons": [
+      1,
+      3
+    ]
+  }
+}
