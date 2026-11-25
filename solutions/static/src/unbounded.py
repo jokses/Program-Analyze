@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import heapq
 import json
+import operator
 import sys
 import traceback
 from collections.abc import Iterable
@@ -11,6 +13,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional, Self
 
+import absIntervals
+from absOutliers import IntervalOutliers
 from dynamic import comparisons_in_method, operands, range_of, split_points
 from syntactic_constants import MethodConstants
 from tools import Abstraction, Lattice
@@ -20,16 +24,6 @@ import jvm
 import jvm.state as jvms
 import sexpr
 from jvm.state import PC
-
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
-
-try:
-    from absOutliers import IntervalOutliers
-except ImportError:
-    IntervalOutliers = None  # type: ignore[assignment]
-
 
 INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
@@ -455,67 +449,35 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
             return Interval.top()
 
 
-def _to_outlier_pieces(iv: Interval) -> list:
-    if IntervalOutliers is None or iv.is_bot():
-        return []
-    abs_iv_cls = type(IntervalOutliers.bot().iv)
-    return [abs_iv_cls(iv.min, iv.max)]
+# The outliers keep a value far from the interval as a single point, like 1234 next
+# to [0, 4] in test_make_keeps_far_point_as_outlier, so a range that lies fully
+# between them is not in the bound.
+def outliers_from_interval(iv: Interval) -> IntervalOutliers:
+    return IntervalOutliers.make([absIntervals.Interval(iv.min, iv.max)])
 
 
-def outliers_from_interval(iv: Interval):
-    if IntervalOutliers is None:
-        return None
-    if iv.is_bot():
-        return IntervalOutliers.bot()
-    return IntervalOutliers.make(_to_outlier_pieces(iv))
-
-
-def reduce_pair(iv: Interval, out) -> tuple[Interval, object]:
-    """Mutually refine Interval and IntervalOutliers so neither retains impossible elements."""
-    if iv.is_bot():
-        return Interval.bot(), (IntervalOutliers.bot() if IntervalOutliers is not None else None)
-    if IntervalOutliers is None or out is None:
-        return iv, out
-    if out.is_bot():
-        return Interval.bot(), IntervalOutliers.bot()
-
-    clipped: list[Interval] = []
-    for piece in out.pieces():
-        inter = Interval(max(iv.min, piece.min), min(iv.max, piece.max))
-        if not inter.is_bot():
-            clipped.append(inter)
-
-    if not clipped:
-        return Interval.bot(), IntervalOutliers.bot()
-
-    abs_iv_cls = type(IntervalOutliers.bot().iv)
-    new_out = IntervalOutliers.make([abs_iv_cls(p.min, p.max) for p in clipped])
-    surviving = new_out.pieces()
-    if not surviving:
-        return Interval.bot(), IntervalOutliers.bot()
-
-    new_iv = Interval(
-        min(p.min for p in surviving),
-        max(p.max for p in surviving),
+# A value is in both the interval and the outliers, so each one limits the other.
+def reduce_pair(
+    iv: Interval, out: IntervalOutliers
+) -> tuple[Interval, IntervalOutliers]:
+    out = IntervalOutliers.make(
+        absIntervals.Interval(max(iv.min, p.min), min(iv.max, p.max))
+        for p in out.pieces()
     )
-    return new_iv, new_out
+    pieces = out.pieces()
+    if not pieces:
+        return Interval.bot(), out
+    return Interval(min(p.min for p in pieces), max(p.max for p in pieces)), out
 
 
-def _step_outliers_arith(a_out, b_out, opr: jvm.BinaryOpr) -> tuple[set[str], object | None]:
-    if IntervalOutliers is None or a_out is None or b_out is None:
-        return set(), None
-    if a_out.is_bot() or b_out.is_bot():
-        return set(), IntervalOutliers.bot()
-
-    res = a_out.arithmetic(b_out, opr)
-    errs = {r for r in res if isinstance(r, str)}
-    vals = [r for r in res if not isinstance(r, str) and not r.is_bot()]
-    if not vals:
-        return errs, None
-    acc = vals[0]
-    for v in vals[1:]:
-        acc = acc | v
-    return errs, acc
+# The errors and the value of a op b on the outliers. The value is None when the
+# outliers give only errors.
+def outliers_arithmetic(
+    a: IntervalOutliers, b: IntervalOutliers, op: jvm.BinaryOpr
+) -> tuple[set[str], IntervalOutliers | None]:
+    results = a.arithmetic(b, op)
+    values = [r for r in results if not isinstance(r, str)]
+    return {r for r in results if isinstance(r, str)}, next(iter(values), None)
 
 
 # -INT_MIN does not fit, and Java gives INT_MIN back.
@@ -527,10 +489,9 @@ def negate_interval(iv: Interval) -> Interval:
 
 # Each piece goes through the same function as the interval. Trying only some values
 # of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
-def map_pieces(out, fn):
-    abs_iv_cls = type(IntervalOutliers.bot().iv)
+def map_pieces(out: IntervalOutliers, fn) -> IntervalOutliers:
     pieces = (fn(Interval(piece.min, piece.max)) for piece in out.pieces())
-    return IntervalOutliers.make(abs_iv_cls(p.min, p.max) for p in pieces)
+    return IntervalOutliers.make(absIntervals.Interval(p.min, p.max) for p in pieces)
 
 
 @dataclass(frozen=True)
@@ -544,19 +505,14 @@ class Val:
     bounded_by: Optional[int] = None
     alloc_id: Optional[int] = None
     is_ref: bool = False
-    out: Optional[object] = None
+    # None gives the outliers of iv.
+    out: IntervalOutliers | None = None
 
     def __post_init__(self):
-        raw_out = outliers_from_interval(self.iv) if self.out is None else self.out
-        red_iv, red_out = reduce_pair(self.iv, raw_out)
-        object.__setattr__(self, "iv", red_iv)
-        object.__setattr__(self, "out", red_out)
-
-    @property
-    def eff_out(self):
-        if self.out is None:
-            return outliers_from_interval(self.iv)
-        return self.out
+        out = outliers_from_interval(self.iv) if self.out is None else self.out
+        iv, out = reduce_pair(self.iv, out)
+        object.__setattr__(self, "iv", iv)
+        object.__setattr__(self, "out", out)
 
     def join(
         self,
@@ -566,25 +522,17 @@ class Val:
     ) -> "Val":
         if narrow:
             iv = self.iv.narrow(o.iv)
-            out = self.eff_out
+            out = self.out
             elem_iv = self.elem_iv.narrow(o.elem_iv)
         elif K is not None:
             k_set = set(K)
             iv = self.iv.widen(o.iv, k_set)
-            if IntervalOutliers is not None and self.eff_out is not None and o.eff_out is not None:
-                out = self.eff_out.widen(o.eff_out, k_set)
-            else:
-                out = outliers_from_interval(iv)
+            out = self.out.widen(o.out, k_set)
             elem_iv = self.elem_iv.widen(o.elem_iv, k_set)
         else:
             iv = self.iv | o.iv
-            if IntervalOutliers is not None and self.eff_out is not None and o.eff_out is not None:
-                out = self.eff_out | o.eff_out
-            else:
-                out = outliers_from_interval(iv)
+            out = self.out | o.out
             elem_iv = self.elem_iv | o.elem_iv
-
-        iv, out = reduce_pair(iv, out)
 
         return Val(
             iv=iv,
@@ -887,11 +835,9 @@ class UnboundedIntervalAnalysis:
             for i, x in enumerate(self.inputs.values):
                 match x:
                     case jpamb.case.Boolean(value=v):
-                        c = 1 if v else 0
-                        locs[i] = Val(Interval.const(c), out=outliers_from_interval(Interval.const(c)))
+                        locs[i] = Val(Interval.const(1 if v else 0))
                     case jpamb.case.Int(value=v):
-                        iv_c = Interval.const(int(v))
-                        locs[i] = Val(iv_c, out=outliers_from_interval(iv_c))
+                        locs[i] = Val(Interval.const(int(v)))
                     case jpamb.case.Array(contains=jvm.Char(), values=vals):
                         ords = [ord(a) for a in vals]
                         e_iv = Interval(min(ords), max(ords)) if ords else Interval.bot()
@@ -1067,8 +1013,7 @@ class UnboundedIntervalAnalysis:
                 raw = getattr(v, "value", v)
                 match t:
                     case jvm.Int():
-                        c_iv = Interval.const(int(raw))
-                        va = Val(c_iv, out=outliers_from_interval(c_iv))
+                        va = Val(Interval.const(int(raw)))
                     case jvm.Reference() | jvm.Array():
                         va = Val(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
                     case jvm.Object(classname) if classname.dotted() == "java.lang.String":
@@ -1086,8 +1031,7 @@ class UnboundedIntervalAnalysis:
                         if raw is None:
                             va = Val(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
                         elif isinstance(raw, (bool, int)):
-                            c_iv = Interval.const(int(raw))
-                            va = Val(c_iv, out=outliers_from_interval(c_iv))
+                            va = Val(Interval.const(int(raw)))
                         else:
                             va = Val(Interval.top(), may_null=False, may_nonnull=True, is_ref=True)
                 out.append((pc + 1, state.push(va)))
@@ -1132,21 +1076,15 @@ class UnboundedIntervalAnalysis:
 
             case jvm.Incr(index=i, amount=a):
                 v = state.load(i)
-                res_list = v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add)
-                _, out_inc = _step_outliers_arith(
-                    v.eff_out, outliers_from_interval(Interval.const(a)), jvm.BinaryOpr.Add
+                _, inc_out = outliers_arithmetic(
+                    v.out, outliers_from_interval(Interval.const(a)), jvm.BinaryOpr.Add
                 )
                 keep_bound = v.bounded_by if a <= 0 else None
-                for r in res_list:
+                for r in v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add):
                     if isinstance(r, Interval):
-                        red_iv, red_out = reduce_pair(r, out_inc)
-                        if not red_iv.is_bot():
-                            out.append(
-                                (
-                                    pc + 1,
-                                    state.store(i, Val(red_iv, bounded_by=keep_bound, out=red_out)),
-                                )
-                            )
+                        new = Val(r, bounded_by=keep_bound, out=inc_out)
+                        if not new.iv.is_bot():
+                            out.append((pc + 1, state.store(i, new)))
 
             case jvm.Dup(words=w):
                 if w == 1:
@@ -1163,9 +1101,8 @@ class UnboundedIntervalAnalysis:
             case jvm.Negate():
                 [val], after = state.pop(1)
                 iv = negate_interval(val.iv)
-                neg_out = map_pieces(val.eff_out, negate_interval)
-                red_iv, red_out = reduce_pair(iv, neg_out)
-                out.append((pc + 1, after.push(Val(red_iv, out=red_out))))
+                neg_out = map_pieces(val.out, negate_interval)
+                out.append((pc + 1, after.push(Val(iv, out=neg_out))))
 
             case jvm.Cast(to_=to):
                 [val], after = state.pop(1)
@@ -1179,43 +1116,30 @@ class UnboundedIntervalAnalysis:
                     case _:
                         target = Interval.top()
                 iv = cast_interval(val.iv, target)
-                cast_out = map_pieces(val.eff_out, lambda piece: cast_interval(piece, target))
-                red_iv, red_out = reduce_pair(iv, cast_out)
-                out.append((pc + 1, after.push(Val(red_iv, out=red_out))))
+                cast_out = map_pieces(val.out, lambda piece: cast_interval(piece, target))
+                out.append((pc + 1, after.push(Val(iv, out=cast_out))))
 
             case jvm.Binary(operant=op):
                 [a, b], after = state.pop(2)
-                iv_res = a.iv.arithmetic(b.iv, op)
-                out_errs, out_joined = _step_outliers_arith(a.eff_out, b.eff_out, op)
-
-                iv_errs = {r for r in iv_res if isinstance(r, str)}
-                if IntervalOutliers is not None and a.out is not None and b.out is not None:
-                    for err in iv_errs & out_errs:
-                        out.append(err)
-                else:
-                    for err in iv_errs:
-                        out.append(err)
-
-                iv_vals = [r for r in iv_res if isinstance(r, Interval) and not r.is_bot()]
-                if iv_vals:
-                    joined_iv = iv_vals[0]
-                    for v in iv_vals[1:]:
-                        joined_iv = joined_iv | v
-                    red_iv, red_out = reduce_pair(joined_iv, out_joined)
-                    if not red_iv.is_bot():
-                        out.append((pc + 1, after.push(Val(red_iv, out=red_out))))
+                results = a.iv.arithmetic(b.iv, op)
+                out_errors, value_out = outliers_arithmetic(a.out, b.out, op)
+                # An error needs both the interval and the outliers to allow it.
+                out.extend(sorted({r for r in results if isinstance(r, str)} & out_errors))
+                values = [r for r in results if isinstance(r, Interval) and not r.is_bot()]
+                if values:
+                    value = Val(functools.reduce(operator.or_, values), out=value_out)
+                    if not value.iv.is_bot():
+                        out.append((pc + 1, after.push(value)))
 
             case jvm.Bitopr(operant=op):
                 [a, b], after = state.pop(2)
                 res_iv = a.iv.bitwise(b.iv, op)
                 if not res_iv.is_bot():
-                    red_iv, red_out = reduce_pair(res_iv, outliers_from_interval(res_iv))
-                    out.append((pc + 1, after.push(Val(red_iv, out=red_out))))
+                    out.append((pc + 1, after.push(Val(res_iv))))
 
             case jvm.Get(static=True, field=field):
                 if getattr(field.extension, "name", "") == "$assertionsDisabled":
-                    z_iv = Interval.const(0)
-                    out.append((pc + 1, state.push(Val(z_iv, out=outliers_from_interval(z_iv)))))
+                    out.append((pc + 1, state.push(Val(Interval.const(0)))))
                 else:
                     out.append((pc + 1, state.push(TOP_VAL)))
 
@@ -1340,12 +1264,7 @@ class UnboundedIntervalAnalysis:
 
             case jvm.Ifz(condition=cond, target=target):
                 [a], after = state.pop(1)
-                z_iv = Interval.const(0)
-                out.extend(
-                    self._branch(
-                        pc, after, a, Val(z_iv, out=outliers_from_interval(z_iv)), cond, target
-                    )
-                )
+                out.extend(self._branch(pc, after, a, Val(Interval.const(0)), cond, target))
 
             case jvm.If(condition=cond, target=target):
                 [a, b], after = state.pop(2)
@@ -1561,18 +1480,7 @@ class UnboundedIntervalAnalysis:
             return [(pc % target, after), (pc + 1, after)]
 
         cmp_opr = cond if isinstance(cond, jvm.CmpOpr) else STR_TO_CMPOPR[cond_str]
-        iv_outcomes = set(a.iv.compare(b.iv, cmp_opr))
-        if (
-            IntervalOutliers is not None
-            and a.eff_out is not None
-            and b.eff_out is not None
-            and not a.eff_out.is_bot()
-            and not b.eff_out.is_bot()
-        ):
-            out_outcomes = set(a.eff_out.compare(b.eff_out, cmp_opr))
-            outcomes = iv_outcomes & out_outcomes
-        else:
-            outcomes = iv_outcomes
+        outcomes = set(a.iv.compare(b.iv, cmp_opr)) & set(a.out.compare(b.out, cmp_opr))
 
         res = []
         for taken in (True, False):
@@ -1580,18 +1488,7 @@ class UnboundedIntervalAnalysis:
                 continue
             tgt_pc = (pc % target) if taken else (pc + 1)
             ra_iv, rb_iv = a.iv.refine(b.iv, cmp_opr, taken)
-
-            if (
-                IntervalOutliers is not None
-                and a.eff_out is not None
-                and b.eff_out is not None
-                and not a.eff_out.is_bot()
-                and not b.eff_out.is_bot()
-            ):
-                ra_out, rb_out = a.eff_out.refine(b.eff_out, cmp_opr, taken)
-            else:
-                ra_out, rb_out = outliers_from_interval(ra_iv), outliers_from_interval(rb_iv)
-
+            ra_out, rb_out = a.out.refine(b.out, cmp_opr, taken)
             ra_iv, ra_out = reduce_pair(ra_iv, ra_out)
             rb_iv, rb_out = reduce_pair(rb_iv, rb_out)
 
@@ -1687,16 +1584,7 @@ class UnboundedIntervalAnalysis:
                 if val.is_ref or (val.may_null and not val.may_nonnull) or val.iv.is_bot():
                     continue
                 # With the points 0 and 300 the fuzzer records 7 as the range [1, 299].
-                pieces = (
-                    val.eff_out.pieces()
-                    if (
-                        IntervalOutliers is not None
-                        and val.eff_out is not None
-                        and not val.eff_out.is_bot()
-                    )
-                    else [val.iv]
-                )
-                for piece in pieces:
+                for piece in val.out.pieces():
                     for sub_iv in Interval(piece.min, piece.max).split(pts):
                         tuples.add((pc, position, *range_of(sub_iv.min, pts)))
 
