@@ -255,7 +255,7 @@ def resolve_method_id(method_id, cases_root=REPO_ROOT / "cases"):
 
 
 def constants_for_method_id(method_id, follow_calls=True):
-    # This is the function the fuzzer and the interval analysis can import.
+    # The fuzzer imports this. The interval analysis reads constants.json which --all writes.
     java_file, method_name = resolve_method_id(method_id)
     return collect_constants(java_file.read_text(), method_name, follow_calls=follow_calls)
 

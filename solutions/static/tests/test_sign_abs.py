@@ -1,6 +1,5 @@
 import absSigns as ab
 from tools import is_galoi, is_lattice, is_poset
-import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -16,16 +15,8 @@ def wrap32(v: int) -> int:
     return (v + 2**31) % 2**32 - 2**31
 
 
-def st_u32():
-    return st.integers(min_value=0, max_value=2**32)
-
-
 def st_stack_ints():
     return st_i32().map(jvms.StackInt)
-
-
-def st_stack_refs():
-    return st_u32().map(jvms.StackReference)
 
 
 def st_signset():

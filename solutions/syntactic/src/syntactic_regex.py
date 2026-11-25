@@ -623,6 +623,8 @@ def substitute_arguments(body, params, args):
     return body
 
 
+# A call is conditional when it is inside a block that is still open at the call,
+# like a() in "if (x) { a(); } b();", but not b().
 def is_conditional(code, pos):
     depth = 0
     for ch in code[:pos]:
@@ -630,9 +632,7 @@ def is_conditional(code, pos):
             depth += 1
         elif ch == "}":
             depth = max(0, depth - 1)
-        if depth > 0:
-            return True
-        statement_start = max(code.rfind(";", 0, pos), code.rfind("}", 0, pos)) + 1
+    return depth > 0
 
 
 def analyze_calls(code, methods, call_stack):
@@ -685,7 +685,7 @@ def analyze_calls(code, methods, call_stack):
         )
 
         # If the called method has no normal termination path,
-        # una llamada incondicional tampoco tiene una ruta normal. Esto es
+        # an unconditional call has none either. This is
         # especially useful for callsAssertFalse().
         if not is_conditional(code, match.start()):
             result["ok"] &= nested["ok"]

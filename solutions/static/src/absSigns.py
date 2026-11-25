@@ -1,4 +1,3 @@
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, Self
@@ -50,7 +49,7 @@ class SignSet(Abstraction, Lattice):
         return to_sign(value) in self.signs
 
     @classmethod
-    def top(cls) -> bool:
+    def top(cls) -> Self:
         return cls(frozenset([-1, 0, 1]))
 
     def __or__(self, other: "SignSet") -> "SignSet":

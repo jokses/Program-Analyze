@@ -75,16 +75,6 @@ CMP = {
 
 @st.composite
 def st_interval(draw):
-    if draw(st.booleans()):
-        max = None
-        if draw(st.booleans()):
-            min = None
-        else:
-            min = draw(st_i32())
-    elif draw(st.booleans()):
-        min = None
-        max = draw(st_i32())
-
     min, max = sorted([draw(st_i32()), draw(st_i32())])
     return ab.Interval(min, max)
 
@@ -100,7 +90,7 @@ def test_interval_is_lattice(a: ab.Interval, b: ab.Interval, c: ab.Interval):
 
 
 @given(st.sets(st_stack_ints()), st_interval())
-def test_lnterval_is_galoi(a: set[jvms.StackInt], b: ab.Interval):
+def test_interval_is_galoi(a: set[jvms.StackInt], b: ab.Interval):
     is_galoi(a, b)
 
 

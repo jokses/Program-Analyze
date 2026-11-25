@@ -25,8 +25,8 @@ class State(sexpr.AsSExpr):
 
     def __or__(self, other):
         assert isinstance(other, State), f"Expected State but got {other!r}"
-        assert len(self.stack) == len(other.stack), "Stacks should be equal lenght"
-        assert len(self.locals) == len(other.locals), "Locals should be equal lenght"
+        assert len(self.stack) == len(other.stack), "Stacks should be equal length"
+        assert len(self.locals) == len(other.locals), "Locals should be equal length"
 
         return State(
             tuple(s1 | s2 for s1, s2 in zip(self.locals, other.locals)),

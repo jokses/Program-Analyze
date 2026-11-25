@@ -100,7 +100,7 @@ def main():
 
     # log.debug("Found method %s %s", method_name, node.range)
 
-    body = node.child_by_field_name("body")
+    body = snode.child_by_field_name("body")
     assert body and body.text
     for t in body.text.splitlines():
         log.debug("line: %s", t.decode())

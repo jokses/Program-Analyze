@@ -106,14 +106,12 @@ def is_lattice(a: Lattice, b: Lattice, c: Lattice):
         is_lattice_identities(x)
 
     if not (a | b <= c):
-        # Calculate values for the error message
         assert not (a <= c and b <= c), (
             f"Upper bound check failed: ({a} | {b}) -> {a | b} is not <= {c}. "
             f"Check individual bounds: {a <= c=}, {b <= c=}."
         )
 
     if not (c <= a & b):
-        # Calculate values for the error message
         assert not (c <= a and c <= b), (
             f"Lower bound check failed: {c} is not <= ({a} & {b}) -> {a & b}. "
             f"Check individual bounds: {c <= a=}, {c <= b=}."
@@ -136,7 +134,7 @@ def is_galoi(a: set[jvms.StackValue], b: Abstraction):
     alpha_a = b.abstract(a)
 
     for value in a:
-        assert value in alpha_a, f"{value} not in {a}"
+        assert value in alpha_a, f"{value} not in {alpha_a}"
 
     if alpha_a <= b:
         for value in a:
