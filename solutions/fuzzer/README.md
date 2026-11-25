@@ -63,4 +63,4 @@ The interpreter gets 213 of 266 on JPAMB 0.10. The 53 cases it fails are in `Ran
 - A method without parameters only gets one run, because every run would be the same.
 - `fuzzer-extension` from `solutions/static` tries three ways to reach the ranges in the bound that `range` did not cover: going backwards along a run of a kept input, the binary search of Group 5 and fuzzing with ten times as many runs without new coverage. The first two test at most 20 values for each int parameter. It only works on methods with int parameters, and it writes one JSON line per range with the runs each way needed to reach it, or null.
 - `fuzzer-results` from `solutions/static` prints the numbers the proposal asks for from a file of `fuzzer-with-bound`, and from a file of `fuzzer-extension` if it gets one.
-- Negative array sizes give `negative array size` and arrays over 1,000,000 elements give `out of memory`. JPAMB does not have these outcomes though so we should be fine.
+- Negative array sizes give `negative array size` and arrays over 1,000,000 elements give `out of memory`. JPAMB does not list these outcomes.
