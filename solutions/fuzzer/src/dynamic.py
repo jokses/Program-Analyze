@@ -1,423 +1,837 @@
-from dataclasses import dataclass
+import bisect
+import functools
 import random
-import re
-import subprocess
 import sys
-import time
-from typing import Any
-from collections.abc import Iterable
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+from syntactic_constants import constants_for_method_id
+
 import jpamb
 import jvm
+import jvm.state as jvmc
 
 DEBUG = False
 
+MAX_ARRAY_SIZE = 1_000_000
 
-@dataclass
-class AgentObservation:
-    outcomes: set[str]
-    sites: set[str]
-    int_ranges: dict[str, tuple[int, int, int]]  # site -> (min, max, count)
+MAX_FUZZ_LENGTH = 8
 
 
-def _param_type_names(param_type: Any) -> set[str]:
-    """Collect possible class/descriptor representations from a JVM parameter type."""
-    names: set[str] = set()
-    raw_str = str(param_type)
-    if raw_str:
-        names.add(raw_str)
-
-    for attr in ("classname", "name", "type", "descriptor", "desc"):
-        val = getattr(param_type, attr, None)
-        if val is None:
-            continue
-        names.add(str(val))
-        dotted = getattr(val, "dotted", None)
-        if callable(dotted):
-            names.add(str(dotted()))
-        elif isinstance(dotted, str):
-            names.add(dotted)
-        for sub_attr in ("name", "internal", "binary", "value"):
-            sub_val = getattr(val, sub_attr, None)
-            if callable(sub_val):
-                names.add(str(sub_val()))
-            elif isinstance(sub_val, str):
-                names.add(sub_val)
-
-    return {n.strip(";").replace("/", ".") for n in names if n} | names
+# Java ints wrap around, like 2147483647 + 1 == -2147483648.
+def to_int(value: int) -> int:
+    return (value + 2**31) % 2**32 - 2**31
 
 
-def _array_element_type(arr_type: Any) -> Any:
-    """Extract the element type descriptor from a jvm.Array instance."""
-    for attr in ("contains", "type", "component", "element", "item", "inner", "value"):
-        if hasattr(arr_type, attr):
-            val = getattr(arr_type, attr)
-            if val is not None:
-                return val
-    raise AttributeError(
-        f"Cannot find element type on {type(arr_type).__name__}: {vars(arr_type)}"
-    )
-
-def comparisons_in_method(method: jvm.AbsMethodID) -> set[int]:
-    """Collect integer constants compared against in a method's bytecode."""
-    suite, eff = jpamb.setup()
-    bc = jpamb.Bytecode(suite, eff, {})
-    m = bc.getmethod(method)
-    consts: set[int] = set()
-    opcodes = m.opcodes
-    for idx, opr in enumerate(opcodes):
-        match opr:
-            case jvm.Ifz():
-                consts.add(0)
-            case jvm.If():
-                if idx > 0 and isinstance(opcodes[idx - 1], jvm.Push):
-                    val = opcodes[idx - 1].value
-                    if isinstance(val, int) and not isinstance(val, bool):
-                        consts.add(val)
-    return consts
+def binary(op, v1: int, v2: int) -> int | str:
+    match op:
+        case jvm.BinaryOpr.Div:
+            if v2 == 0:
+                return "divide by zero"
+            # Java rounds toward zero and Python's // rounds down.
+            quotient = abs(v1) // abs(v2)
+            return to_int(quotient if (v1 < 0) == (v2 < 0) else -quotient)
+        case jvm.BinaryOpr.Rem:
+            if v2 == 0:
+                return "divide by zero"
+            # The remainder has the sign of v1, like -7 % 2 == -1 in Java.
+            remainder = abs(v1) % abs(v2)
+            return remainder if v1 >= 0 else -remainder
+        case jvm.BinaryOpr.Sub:
+            return to_int(v1 - v2)
+        case jvm.BinaryOpr.Mul:
+            return to_int(v1 * v2)
+        case jvm.BinaryOpr.Add:
+            return to_int(v1 + v2)
+        case a:
+            raise NotImplementedError(f"Unhandled binary {op!r}")
 
 
-def operands(opr: Any, stack: tuple[Any, ...]) -> list[Any]:
-    """Return the stack operands consumed by a bytecode instruction in positional order."""
-    match opr:
-        case jvm.Ifz() | jvm.Negate() | jvm.Cast() | jvm.ArrayLength():
-            return [stack[-1]] if len(stack) >= 1 else []
-        case jvm.If() | jvm.Binary() | jvm.Bitopr() | jvm.ArrayLoad():
-            return [stack[-2], stack[-1]] if len(stack) >= 2 else []
-        case jvm.ArrayStore():
-            return [stack[-3], stack[-2], stack[-1]] if len(stack) >= 3 else []
+def bitwise(op: jvm.BitOpr, v1: int, v2: int) -> int:
+    # Source: https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-6.html#jvms-6.5.ishl
+    # A shift only uses the low 5 bits of v2.
+    shift = v2 & 0x1F
+    match op:
+        case jvm.BitOpr.Shl:
+            return to_int(v1 << shift)
+        case jvm.BitOpr.Shr:
+            return v1 >> shift
+        case jvm.BitOpr.Ushr:
+            # Source: https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-6.html#jvms-6.5.iushr
+            # The bits shifted in are zeros, also for a negative v1.
+            return to_int((v1 % 2**32) >> shift)
+        case jvm.BitOpr.And:
+            return v1 & v2
+        case jvm.BitOpr.Or:
+            return v1 | v2
+        case jvm.BitOpr.Xor:
+            return v1 ^ v2
+
+
+def compare(op, v1: int, v2: int) -> bool:
+    match op:
+        case jvm.CmpOpr.Eq:
+            return v1 == v2
+        case jvm.CmpOpr.Ne:
+            return v1 != v2
+        case jvm.CmpOpr.Lt:
+            return v1 < v2
+        case jvm.CmpOpr.Le:
+            return v1 <= v2
+        case jvm.CmpOpr.Gt:
+            return v1 > v2
+        case jvm.CmpOpr.Ge:
+            return v1 >= v2
         case _:
-            return []
+            raise NotImplementedError(f"Unhandled comparation {op!r}")
 
 
-def split_points(constants: Iterable[int], split: str = "three") -> list[int]:
-    """Build sorted split boundary points from comparison constants."""
-    pts: set[int] = set()
-    for c in constants:
-        if split == "one":
-            pts.add(c)
-        elif split == "two":
-            pts.update({c, c + 1})
-        else:  # "three": isolates c as [c, c], leaving (..., c - 1] and [c + 1, ...)
-            pts.update({c - 1, c, c + 1})
-    return sorted(p for p in pts if -(1 << 31) <= p <= (1 << 31) - 1)
+def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | str]:
+    assert isinstance(state, jvmc.State), f"expected state but got {state}"
+    frame = state.frames.peek()
+    pc = frame.pc
+    opr = bc[pc]
+    output = state
+    if DEBUG:
+        print(f"Stepping {pc}:\n > {opr}", file=sys.stderr)
+    match opr:
+        case jvm.Push(type=t, value=v):
+            if DEBUG:
+                print(f"---value   {t}: {t!r}", file=sys.stderr)
+            match t:
+                case jvm.Int():
+                    frame.stack.push(jvmc.StackInt(v))
 
+                case jvm.Reference() | jvm.Array():
+                    frame.stack.push(jvmc.StackReference(v))
 
-def range_of(val: int, pts: list[int]) -> tuple[int, int]:
-    """Return the (low, high) bucket interval containing `val` induced by `pts`."""
-    int_min = -(1 << 31)
-    int_max = (1 << 31) - 1
-    if not pts:
-        return (int_min, int_max)
+                # Håndtering af String-objekter (f.eks. ldc ["hello"])
+                case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+                    # 1. Opret en ny HeapString på din heap med værdien (v)
+                    heap_str = jvmc.HeapString(content=v)
 
-    lo = int_min
-    for p in pts:
-        if val < p:
-            return (lo, p - 1)
-        if val == p:
-            return (p, p)
-        lo = p + 1
-    return (lo, int_max)
-def _is_smith_type(param_type: Any) -> bool:
-    """Return True when a JVM parameter descriptor represents jpamb.utils.Smith."""
-    names = _param_type_names(param_type)
-    return bool(names & {"jpamb.utils.Smith", "Ljpamb/utils/Smith;"})
+                    # 2. Gem den på heapen og få en StackReference retur
+                    str_ref = state.heap.new(heap_str)
 
+                    # 3. Push referencen på din operand stack
+                    frame.stack.push(str_ref)
 
-def _is_string_type(param_type: Any) -> bool:
-    """Return True when a JVM parameter descriptor represents java.lang.String."""
-    names = _param_type_names(param_type)
-    return bool(names & {"java.lang.String", "Ljava/lang/String;"})
+                case _:
+                    raise NotImplementedError(f"expected int, but got {jvm.Int()} {t} {t!r}")
+            frame.pc += 1
 
+        case jvm.Ifz(offset=off, condition=cond, target=targ):
+            value = frame.stack.pop()
+            assert isinstance(value, jvmc.StackInt), f"expected int, but got {value}"
 
-def _random_string(rand: random.Random, max_len: int = 12) -> str:
-    """Generate a random ASCII string avoiding characters that break s'...' encoding."""
-    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/ "
-    length = rand.randint(0, max_len)
-    return "".join(rand.choice(alphabet) for _ in range(length))
-
-
-def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Input:
-    """Generate a random input matching the target method's parameter types."""
-    values: list[Any] = []
-    for param_type in methodid.extension.params:
-        if isinstance(param_type, jvm.Int):
-            values.append(jpamb.case.Int(rand.randint(-(1 << 31), (1 << 31) - 1)))
-        elif isinstance(param_type, jvm.Boolean):
-            values.append(jpamb.case.Boolean(rand.choice([True, False])))
-        elif isinstance(param_type, jvm.Array):
-            elem = _array_element_type(param_type)
-            length = rand.randint(0, 8)
-            if isinstance(elem, jvm.Int):
-                raw_ints = [rand.randint(0, 100) for _ in range(length)]
-                values.append(jpamb.case.Array(contains=elem, values=tuple(raw_ints)))
-            elif isinstance(elem, jvm.Char):
-                raw_chars = tuple(chr(rand.randint(32, 126)) for _ in range(length))
-                values.append(jpamb.case.Array(contains=elem, values=raw_chars))
-            elif isinstance(elem, jvm.Boolean):
-                raw_bools = tuple(rand.choice([True, False]) for _ in range(length))
-                values.append(jpamb.case.Array(contains=elem, values=raw_bools))
+            if compare(cond, value.value, 0):
+                frame.pc = frame.pc % targ
             else:
-                raise NotImplementedError(
-                    f"Don't know how to create random array elements for {elem}"
+                frame.pc += 1
+
+        case jvm.Load(index=index):
+            frame.stack.push(frame.locals[index])
+            frame.pc += 1
+
+        case jvm.InvokeStatic(offset=off, method=method_id):
+            target_method = bc.getmethod(method_id)
+            if DEBUG:
+                print(f" Kalder metode: {method_id.extension.name}", file=sys.stderr)
+
+            new_frame = jvmc.Frame.from_method(target_method)
+            num_params = len(method_id.extension.params._elements)
+
+            args = []
+            for _ in range(num_params):
+                args.append(frame.stack.pop())
+            args.reverse()
+
+            for i, arg_val in enumerate(args):
+                new_frame.locals[i] = arg_val
+
+            # The caller continues after the call when the new frame returns.
+            frame.pc += 1
+            state.frames.push(new_frame)
+
+        case jvm.NewArray(offset=off, type=t, dim=d):
+            count = frame.stack.pop().value
+            if DEBUG:
+                print(f" value ----  {t} {count}", file=sys.stderr)
+
+            # JPAMB has no outcome for NegativeArraySizeException.
+            if count < 0:
+                return pc, "negative array size"
+            # A large random size would use up the memory.
+            if count > MAX_ARRAY_SIZE:
+                return pc, "out of memory"
+            match t:
+                case jvm.Int():
+                    heap_array_obj = jvm.state.HeapArray(contains=t, values=[0] * count)
+                    # array_reference = jvmc.StackRef(array_data)
+                    array_ref = state.heap.new(heap_array_obj)
+                    frame.stack.push(array_ref)
+                    frame.pc += 1
+                case _:
+                    raise NotImplementedError(f"expected int, but got {jvm.Int()}  {t!r}")
+
+        case jvm.ArrayStore(offset=off, type=t):
+            value_element = frame.stack.pop()
+            index_element = frame.stack.pop()
+            ref_element = frame.stack.pop()
+
+            raw_value = value_element.value
+            raw_index = index_element.value
+
+            try:
+                heap_array = state.heap[ref_element]
+            except IndexError:
+                return pc, "null pointer"
+
+            # Tjek grænser (Bounds checking)
+            if not (0 <= raw_index < len(heap_array.values)):
+                return pc, "out of bounds"
+
+            heap_array.values[raw_index] = raw_value
+            frame.pc += 1
+
+        case jvm.InvokeVirtual(offset=off, method=method_id):
+            # 1. Træk navnet på metoden og klassen ud som strenge
+            classname_str = method_id.classname.dotted()
+            method_name = method_id.extension.name
+
+            if DEBUG:
+                print(
+                    f" Kalder virtuel metode: {classname_str}.{method_name}",
+                    file=sys.stderr,
                 )
-        elif _is_smith_type(param_type):
-            smith_bits = "".join(rand.choice("01") for _ in range(rand.randint(8, 32)))
-            values.append(jpamb.case.Smith(value=smith_bits))
-        elif _is_string_type(param_type):
-            values.append(jpamb.case.String(value=_random_string(rand)))
-        else:
-            raise NotImplementedError(
-                f"Don't know how to create random values for {param_type}"
-            )
-    return jpamb.case.Input(tuple(values))
+
+            # 2. Hent antallet af parametre
+            num_params = len(method_id.extension.params._elements)
+
+            # 3. Hent argumenterne fra den nuværende stack
+            args = []
+            for _ in range(num_params):
+                args.append(frame.stack.pop())
+            args.reverse()
+
+            # 4. Pop selve objekt-referencen ('this') fra stacken
+            object_ref = frame.stack.pop()
+
+            # --- HACK: Håndtering af indbyggede java.lang.String metoder ---
+            if classname_str == "java.lang.String":
+                # Hent det faktiske HeapString-objekt ud fra din heap ved hjælp af referencen
+                heap_string_obj = state.heap[object_ref]
+                raw_string = heap_string_obj.content  # Dette er den rå Python-streng (f.eks. "hello")
+
+                match method_name:
+                    case "equals":
+                        # .equals(Object) sammenligner med en anden streng
+                        # Vi skal hente den anden strengs reference ud af argumenterne (args[0])
+                        other_ref = args[0]
+                        other_string_obj = state.heap[other_ref]
+
+                        # Lav sammenligningen og push resultatet (1 for True, 0 for False)
+                        is_equal = (raw_string == other_string_obj.content)
+                        frame.stack.push(jvmc.StackInt(1 if is_equal else 0))
+
+                    case "length":
+                        # .length() returnerer længden på strengen
+                        frame.stack.push(jvmc.StackInt(len(raw_string)))
+
+                    case "charAt":
+                        # .charAt(int) returnerer Unicode-værdien for tegnet på indeks args[0]
+                        idx = args[0].value
+                        frame.stack.push(jvmc.StackInt(ord(raw_string[idx])))
+
+                    case _:
+                        raise NotImplementedError(f"Strengmetoden {method_name} er ikke implementeret i InvokeVirtual")
+
+                # Da vi kørte strengmetoden som et hack uden at pushe en ny frame,
+                # rykker vi blot den nuværende PC én frem og fortsætter!
+                frame.pc += 1
+                return pc, state
+
+            # --- NORMAL VELKENDT METODE (Hvis metoden findes i din egen bytecode-fil) ---
+            target_method = bc.getmethod(method_id)
+            new_frame = jvmc.Frame.from_method(target_method)
+
+            # Læg 'this' ind på indeks 0 i de lokale variable
+            new_frame.locals[0] = object_ref
+
+            # Læg argumenterne ind på de efterfølgende pladser (fra indeks 1 og frem)
+            for i, arg_val in enumerate(args):
+                new_frame.locals[i + 1] = arg_val
+
+            # Ryk den gamle PC frem, inden vi pusher den nye frame
+            frame.pc += 1
+
+            state.frames.push(new_frame)
+
+        case jvm.Negate(offset=off, type=t):
+            # 1. Pop værdien der skal negeres fra operand-stacken
+            value_element = frame.stack.pop()
+            assert isinstance(value_element, jvmc.StackInt), f"expected int, but got {value_element}"
+
+            # 2. Beregn den aritmetiske negation (-værdien)
+            raw_value = value_element.value
+            negated_result = to_int(-raw_value)
+
+            match t:
+                case jvm.Int():
+                    # 3. Pak resultatet ind i en StackInt og push det tilbage på stacken
+                    frame.stack.push(jvmc.StackInt(value=negated_result))
+                case _:
+                    raise NotImplementedError(f"Negate er ikke implementeret for typen {t!r}")
+
+            # 4. Ryk programtælleren én frem og fortsæt
+            frame.pc += 1
+
+        case jvm.ArrayLength(offset=off):
+            ref_element = frame.stack.pop()
+
+            try:
+                heap_array = state.heap[ref_element]
+            except IndexError:
+                return pc, "null pointer"
+
+            length = len(heap_array.values)
+            frame.stack.push(jvm.state.StackInt(value=length))
+            frame.pc += 1
+
+        case jvm.ArrayLoad(offset=off, type=t):
+            index_element = frame.stack.pop()
+            ref_element = frame.stack.pop()
+
+            raw_index = index_element.value
+
+            try:
+                heap_array = state.heap[ref_element]
+            except IndexError:
+                return pc, "null pointer"
+
+            if not (0 <= raw_index < len(heap_array.values)):
+                return pc, "out of bounds"
+
+            raw_value = heap_array.values[raw_index]
+
+            match t:
+                case jvm.Int() | jvm.Char():
+                    frame.stack.push(jvm.state.StackInt(value=raw_value))
+                case _:
+                    raise NotImplementedError(f"ArrayLoad er ikke implementeret for typen {t!r}")
+
+            frame.pc += 1
+
+        case jvm.Incr(offset=off, index=idx, amount=amt):
+            # 1. Hent den nuværende værdi ud fra lokale variable på det givne index
+            current_local = frame.locals[idx]
+
+            # Sørg for at hente den rå heltalværdi ud (det er en StackInt)
+            current_value = current_local.value
+
+            # 2. Læg instruktionens 'amount' (amt) til værdien
+            new_value = to_int(current_value + amt)
+
+            # 3. Pak det rå resultat ind i en ny StackInt og gem det tilbage i locals
+            frame.locals[idx] = jvm.state.StackInt(value=new_value)
+
+            # 4. Gå videre til næste instruktion
+            frame.pc += 1
+
+        case jvm.Dup(offset=off, words=w):
+            if w == 1:
+                top_element = frame.stack.pop()
+
+                frame.stack.push(top_element)
+                frame.stack.push(top_element)
+
+                frame.pc += 1
+            elif w == 2:
+                v1 = frame.stack.pop()  # Øverste
+                v2 = frame.stack.pop()  # Næstøverste
+
+                frame.stack.push(v2)
+                frame.stack.push(v1)
+                frame.stack.push(v2)
+                frame.stack.push(v1)
+
+                frame.pc += 1
+            else:
+                raise NotImplementedError(f"Dup med words={w} er ikke implementeret")
+
+        case jvm.Binary(type=jvm.Int(), operant=op):
+            v2, v1 = frame.stack.pop(), frame.stack.pop()
+            assert isinstance(v1, jvmc.StackInt), f"expected int, but got {v1}"
+            assert isinstance(v2, jvmc.StackInt), f"expected int, but got {v2}"
+
+            value = binary(op, v1.value, v2.value)
+
+            if isinstance(value, str):
+                output = value
+            else:
+                frame.stack.push(jvmc.StackInt(value))
+                frame.pc += 1
+
+        case jvm.Bitopr(type=jvm.Int(), operant=op):
+            v2, v1 = frame.stack.pop(), frame.stack.pop()
+            assert isinstance(v1, jvmc.StackInt), f"expected int, but got {v1}"
+            assert isinstance(v2, jvmc.StackInt), f"expected int, but got {v2}"
+            frame.stack.push(jvmc.StackInt(bitwise(op, v1.value, v2.value)))
+            frame.pc += 1
+
+        case jvm.Return(type=t):
+            is_void = (t is None)
+
+            if not is_void:
+                v1 = frame.stack.pop()
+
+                # Hvis dette er den absolut sidste ramme på callstacken
+                if len(state.frames.frames) == 1:
+                    frame.stack.push(v1)
+                    # Forhindrer IndexError i den absolut sidste returnering
+                    return pc, "ok"
+                else:
+                    # Intern returnering (f.eks. fra generatePrimeArray tilbage til allPrimesArePositive)
+                    state.frames.pop()
+                    previous_frame = state.frames.peek()
+                    previous_frame.stack.push(v1)
+                    return pc, state
+            else:
+                # For void-metoder
+                if len(state.frames.frames) == 1:
+                    return pc, "ok"
+                else:
+                    state.frames.pop()
+                    return pc, state
+
+        case jvm.If(offset=off, condition=cond, target=targ):
+            value2 = frame.stack.pop()  # Højre side (f.eks. array.length)
+            value1 = frame.stack.pop()  # Venstre side (f.eks. i)
+            assert isinstance(value1, jvmc.StackInt), f"expected int, but got {value1}"
+            assert isinstance(value2, jvmc.StackInt), f"expected int, but got {value2}"
+
+            # Vi tvinger den direkte tildeling af PC-objektet via din overskrevne modulo-operatør
+            if compare(cond, value1.value, value2.value):
+                frame.pc %= targ
+            else:
+                frame.pc += 1
+
+        case jvm.Goto(offset=off, target=targ):
+            frame.pc %= targ
+            # raise NotImplementedError(f"Got not implement  {targ} {targ!r}")
+
+        case jvm.Store(offset=off, type=typ, index=i):
+            value = frame.stack.pop()
+            frame.locals[i] = value
+            frame.pc += 1
+
+        case jvm.Cast(offset=off, from_=fr, to_=to):
+            v1 = frame.stack.pop()
+
+            match to:
+                case jvm.Short():
+                    val_16bit = v1.value & 0xFFFF
+                    result = val_16bit if val_16bit < 0x8000 else val_16bit - 0x10000
+                    frame.stack.push(jvmc.StackInt(result))
+                case jvm.Byte():
+                    val_8bit = v1.value & 0xFF
+                    result = val_8bit if val_8bit < 0x80 else val_8bit - 0x0100
+                    frame.stack.push(jvmc.StackInt(result))
+                case jvm.Char():
+                    result = v1.value & 0xFFFF
+                    frame.stack.push(jvmc.StackInt(result))
+                case jvm.Int():
+                    result = int(v1.value) & 0xFFFFFFFF
+                    if result >= 0x80000000:
+                        result -= 0x100000000
+                    frame.stack.push(jvmc.StackInt(result))
+                case _:
+                    raise NotImplementedError(f"Cast to {to!r} ")
+            frame.pc += 1
+
+        case jvm.Get(static=True, field=field):
+            # Hack - Only handle the assertion case
+            assert field.extension.name == "$assertionsDisabled"
+
+            # Hack - Assuming assertions are never disabled
+            frame.stack.push(jvmc.StackInt(0))
+            frame.pc += 1
+
+        case jvm.InvokeSpecial(offset=off, method=method_id, is_interface=is_iface):
+            num_params = len(method_id.extension.params._elements)
+            for _ in range(num_params):
+                frame.stack.pop()
+            object_ref = frame.stack.pop()
+            frame.pc += 1
+
+        case jvm.Throw(offset=off):
+            error_ref = frame.stack.pop()
+            return pc, "assertion error"
+
+        case jvm.New(offset=off) as new_opr:
+            # Ved at bruge 'as new_opr' er vi 100% sikre på at ramme den rigtige instans
+            classname_obj = new_opr.classname
+            dummy_error_obj = jvmc.HeapString(content=f"Exception: {classname_obj.dotted()}")
+            error_ref = state.heap.new(dummy_error_obj)
+            frame.stack.push(error_ref)
+            frame.pc += 1
+
+        case a:
+            raise NotImplementedError(a.help())
+
+    assert isinstance(output, (jvmc.State, str))
+
+    return pc, output
 
 
-def map_jvm_outcome(raw: str) -> str | None:
-    """Normalize raw JVM outcome tokens to canonical jpamb.QUERIES strings."""
-    token = " ".join(raw.strip().lower().replace("_", " ").split())
-    mapping = {
-        "ok": "ok",
-        "success": "ok",
-        "assertion error": "assertion error",
-        "divide by zero": "divide by zero",
-        "null pointer": "null pointer",
-        "out of bounds": "out of bounds",
-        "*": "*",
-        "timeout": "*",
-    }
-    return mapping.get(token)
+def initial(bc: jpamb.Bytecode, methodid: jvm.AbsMethodID, input: jpamb.Input):
+    frame = jvmc.Frame.from_method(bc.getmethod(methodid))
+    state = jvmc.State(jvmc.Heap(), jvmc.CallStack.from_frames([frame]))
+    for i, v in enumerate(input.values):
+        # Convert arbitrary values into local values
+        match v:
+            case jpamb.case.Boolean(value):
+                frame.locals[i] = jvmc.StackInt(1 if value else 0)
+            case jpamb.case.Int(value):
+                frame.locals[i] = jvmc.StackInt(value)
+            case jpamb.case.Array(contains=type, values=values):
+                match type:
+                    case jvm.Char():
+                        ref = state.heap.new(
+                            jvmc.HeapArray(type, [ord(a) for a in values])
+                        )
+                    case jvm.Int():
+                        ref = state.heap.new(jvmc.HeapArray(type, [a for a in values]))
+                frame.locals[i] = ref
+            case jpamb.case.String(value=value):
+                ref = state.heap.new(jvmc.HeapString(value))
+                frame.locals[i] = ref
+            case a:
+                raise NotImplementedError(
+                    f"Do not know how to convert values of type {a!r} to a local value"
+                )
+
+    return state
 
 
-def _normalize_encoded_arg(arg: str) -> str:
-    """Remove whitespace after commas so InputParser parses array literals cleanly."""
-    return re.sub(r",\s+", ",", arg)
-
-
-def _format_jvm_args(inp: jpamb.case.Input) -> list[str]:
-    """Convert a jpamb.case.Input into CLI argument strings for InputParser.parse."""
-    encoded = getattr(inp, "encode", None)
-    if callable(encoded):
-        return [_normalize_encoded_arg(encoded())]
-    return [_normalize_encoded_arg(str(v)) for v in inp]
-
-
-def parse_agent_int_ranges(payload: str) -> dict[str, tuple[int, int, int]]:
-    """Parse 'site=min..max#count;...' emitted by InstrumentationAgent.dumpSummary()."""
-    ranges: dict[str, tuple[int, int, int]] = {}
-    if not payload.strip():
-        return ranges
-
-    for entry in payload.split(";"):
-        entry = entry.strip()
-        if not entry or "=" not in entry:
-            continue
-        site, spec = entry.rsplit("=", 1)
-        if "#" not in spec or ".." not in spec:
-            continue
-        bounds_part, count_part = spec.rsplit("#", 1)
-        min_str, max_str = bounds_part.split("..", 1)
-        try:
-            lo = int(min_str)
-            hi = int(max_str)
-            cnt = int(count_part)
-        except ValueError:
-            continue
-        ranges[site] = (lo, hi, cnt)
-
-    return ranges
-
-
-def run_jvm_dynamic_with_ranges(
-    methodid: jvm.AbsMethodID,
-    inputs: list[jpamb.case.Input] | jpamb.case.Input,
-    *,
-    agent_jar: str = "target/agent.jar",
-    classes_dir: str = "target/classes",
-    timeout_s: float = 1.0,
-) -> AgentObservation:
-    """Run a batch of inputs on one instrumented JVM process and return outcomes, sites, and int ranges."""
-    batch = [inputs] if isinstance(inputs, jpamb.case.Input) else list(inputs)
-    if not batch:
-        return AgentObservation(outcomes=set(), sites=set(), int_ranges={})
-
-    formatted_args: list[str] = []
-    for inp in batch:
-        formatted_args.extend(_format_jvm_args(inp))
-
-    cmd = [
-        "java",
-        "-ea",
-        "-XX:+TieredCompilation",
-        "-XX:TieredStopAtLevel=1",
-        f"-javaagent:{agent_jar}",
-        "-cp",
-        classes_dir,
-        "jpamb.Runtime",
-        methodid.encode(),
-        *formatted_args,
-    ]
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired:
-        if DEBUG:
-            print(f"[jvm timeout after {timeout_s}s] cmd={cmd}", file=sys.stderr)
-        return AgentObservation(outcomes={"*"}, sites=set(), int_ranges={})
-
-    if DEBUG or proc.returncode != 0:
-        print(
-            f"[jvm rc={proc.returncode}] out={proc.stdout!r} err={proc.stderr!r}",
-            file=sys.stderr,
-        )
-
-    outcomes: set[str] = set()
-    sites: set[str] = set()
-    int_ranges: dict[str, tuple[int, int, int]] = {}
-
-    for line in proc.stdout.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("DYNAMIC_OUTCOMES:"):
-            payload = stripped.removeprefix("DYNAMIC_OUTCOMES:")
-            for part in payload.split(","):
-                mapped = map_jvm_outcome(part)
-                if mapped is not None:
-                    outcomes.add(mapped)
-        elif stripped.startswith("AGENT_SITES:"):
-            payload = stripped.removeprefix("AGENT_SITES:")
-            for site in payload.split("|"):
-                if site:
-                    sites.add(site)
-        elif stripped.startswith("AGENT_INT_RANGES:"):
-            payload = stripped.removeprefix("AGENT_INT_RANGES:")
-            int_ranges.update(parse_agent_int_ranges(payload))
-        else:
-            mapped = map_jvm_outcome(stripped)
-            if mapped is not None:
-                outcomes.add(mapped)
-
-    return AgentObservation(outcomes=outcomes, sites=sites, int_ranges=int_ranges)
-
-
-def run_jvm_dynamic(
-    methodid: jvm.AbsMethodID,
-    inp: jpamb.case.Input,
-    *,
-    agent_jar: str = "target/agent.jar",
-    classes_dir: str = "target/classes",
-    timeout_s: float = 0.5,
-) -> set[str]:
-    """Run a single input on the instrumented JVM and return observed query outcomes."""
-    return run_jvm_dynamic_with_ranges(
-        methodid,
-        [inp],
-        agent_jar=agent_jar,
-        classes_dir=classes_dir,
-        timeout_s=timeout_s,
-    ).outcomes
-
-
-def _merge_range(
-    global_ranges: dict[str, tuple[int, int]],
-    obs_ranges: dict[str, tuple[int, int, int]],
-) -> bool:
-    """Merge observed (min, max, count) into global (min, max); return True if range expanded."""
-    expanded = False
-    for site, (lo, hi, _cnt) in obs_ranges.items():
-        if site not in global_ranges:
-            global_ranges[site] = (lo, hi)
-            expanded = True
-        else:
-            cur_lo, cur_hi = global_ranges[site]
-            new_lo = min(cur_lo, lo)
-            new_hi = max(cur_hi, hi)
-            if new_lo < cur_lo or new_hi > cur_hi:
-                global_ranges[site] = (new_lo, new_hi)
-                expanded = True
-    return expanded
-
-
-def analyse() -> None:
-    """Run batched dynamic analysis against the instrumented JVM with range-guided early stopping."""
-    methodid = jpamb.getmethodid(
-        "JK_Analyse",
+def interpret():
+    """The entry point for the interpreter"""
+    methodid, input, max_steps = jpamb.getcase(
+        "JK_Interpret",
         "1.0",
         "Joachim",
         ["dynamic", "python"],
         for_science=True,
     )
 
-    rand = random.Random(0)
-    behaviors: set[str] = set()
-    covered_sites: set[str] = set()
-    observed_int_ranges: dict[str, tuple[int, int]] = {}
-    deadline = time.monotonic() + 3.0
-    non_timeout_queries = {q for q in jpamb.QUERIES if q != "*"}
+    suite, eff = jpamb.setup()
+    bc = jpamb.Bytecode(suite, eff, {})
 
-    is_zero_arg = len(methodid.extension.params) == 0
-    total_budget = 1 if is_zero_arg else 15
-    batch_size = 1 if is_zero_arg else 5
+    state = initial(bc, methodid, input)
 
-    generated = 0
-    while generated < total_budget:
-        if time.monotonic() >= deadline:
-            behaviors.add("*")
+    last = jpamb.emit_init(state)
+
+    for x in range(max_steps):
+        pc, state = step(bc, state)
+        last = jpamb.emit_step(last, pc, state)
+
+        if isinstance(state, str):
             break
 
-        batch: list[jpamb.case.Input] = []
-        while len(batch) < batch_size and generated < total_budget:
-            generated += 1
-            try:
-                batch.append(fuzz_input(rand, methodid))
-            except NotImplementedError as exc:
-                if DEBUG:
-                    print(f"[skip unsupported input] {exc}", file=sys.stderr)
 
-        if not batch:
-            break
+def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Input:
+    input = []
+    # 1. come up with possible inputs
+    for p in methodid.extension.params:
+        match p:
+            case jvm.Int():
+                input.append(jpamb.case.Int(rand.randint(-(1 << 31), (1 << 31) - 1)))
+            case jvm.Boolean():
+                input.append(jpamb.case.Boolean(1 == rand.randint(0, 1)))
+            # Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.1
+            case jvm.Array(contains=jvm.Int()):
+                length = rand.randint(0, MAX_FUZZ_LENGTH)
+                values = [
+                    rand.randint(-(1 << 31), (1 << 31) - 1) for _ in range(length)
+                ]
+                input.append(jpamb.case.Array(jvm.Int(), tuple(values)))
+            case jvm.Array(contains=jvm.Char()):
+                length = rand.randint(0, MAX_FUZZ_LENGTH)
+                values = rand.choices("abcdefghijklmnopqrstuvwxyz", k=length)
+                input.append(jpamb.case.Array(jvm.Char(), tuple(values)))
+            # Inde i din fuzz_input funktion, hvor du genererer værdier til java.lang.String:
+            case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+                # 1. Generer den tilfældige rå streng
+                random_str = "fuzz_" + "".join(rand.choices("abcdefghijklmnopqrstuvwxyz", k=5))
 
-        remaining = max(0.15, min(1.0, deadline - time.monotonic()))
-        obs = run_jvm_dynamic_with_ranges(methodid, batch, timeout_s=remaining)
+                # 2. Pak den ind i jpamb's eget case-objekt, som din initial() forventer!
+                input.append(jpamb.case.String(value=random_str))
 
-        prev_outcomes = len(behaviors)
-        prev_sites = len(covered_sites)
-        behaviors.update(obs.outcomes)
-        covered_sites.update(obs.sites)
-        expanded = _merge_range(observed_int_ranges, obs.int_ranges)
+            # case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+            #     # 1. Generer en tilfældig streng (eller en fast test-streng som "hello")
+            #     random_str = "fuzz_" + "".join(rand.choices("abcdefghijklmnopqrstuvwxyz", k=5))
+            #
+            #     # 2. Opret et HeapString objekt (fra din state.py hukommelsesmodel)
+            #     heap_string_obj = jvm.state.HeapString(content=random_str)
+            #
+            #     # Bemærk: Hvis din fuzz_input funktion har adgang til 'state.heap',
+            #     # gemmer du den der og appender den returnerede StackReference:
+            #     # string_ref = state.heap.new(heap_string_obj)
+            #     # inputs.append(string_ref)
+            #
+            #     # HVIS fuzz_input kun genererer de rå værdier før staten er bygget:
+            #     # Kan det være du blot skal returnere strengen eller jvm.state.HeapString(content=random_str)
+            #     # Tjek hvordan dit jvm-framework normalt pakker fuzz-inputs i staten.
+            #     input.append(random_str)
+            # case jpamb.case.String(value=value):
+            #     ref = state.heap.new(jvmc.HeapString(value))
+            #     frame.locals[i] = ref
 
-        if "*" in obs.outcomes and len(batch) > 1:
-            behaviors.discard("*")
-            for single_inp in batch:
-                if time.monotonic() >= deadline:
-                    behaviors.add("*")
-                    break
-                per_timeout = max(0.08, min(0.25, deadline - time.monotonic()))
-                single_obs = run_jvm_dynamic_with_ranges(
-                    methodid, [single_inp], timeout_s=per_timeout
+            case a:
+                raise NotImplementedError(
+                    "Don't know how to create random values for {input}"
                 )
-                behaviors.update(single_obs.outcomes)
-                covered_sites.update(single_obs.sites)
-                expanded = _merge_range(observed_int_ranges, single_obs.int_ranges) or expanded
 
-        if DEBUG:
-            print(
-                f"[fuzz] batch={len(batch)} expanded={expanded} sites={len(covered_sites)} ranges={observed_int_ranges}",
-                file=sys.stderr,
+    return jpamb.case.Input(input)
+
+
+# Source: https://github.com/kalhauge/jpamb/commit/7a7a36af695aae8638be4983e291d456d4eff277
+@dataclass
+class Draw:
+    code: bytes
+    offset: int = 0
+
+    def next_byte(self) -> int:
+        value = self.code[self.offset] if self.offset < len(self.code) else 0
+        self.offset += 1
+        return value
+
+    def next_32bit_signed_int(self) -> int:
+        value = int.from_bytes(self.code[self.offset : self.offset + 4], signed=True)
+        self.offset += 4
+        return value
+
+
+def fuzz_type(draw: Draw, target: jvm.Type) -> jpamb.case.Value:
+    match target:
+        case jvm.Int():
+            return jpamb.case.Int(draw.next_32bit_signed_int())
+        case jvm.Boolean():
+            return jpamb.case.Boolean(draw.next_byte() % 2 == 1)
+        case jvm.Array(contains=jvm.Int()):
+            length = draw.next_byte() % (MAX_FUZZ_LENGTH + 1)
+            values = tuple(draw.next_32bit_signed_int() for _ in range(length))
+            return jpamb.case.Array(jvm.Int(), values)
+        case jvm.Array(contains=jvm.Char()):
+            length = draw.next_byte() % (MAX_FUZZ_LENGTH + 1)
+            values = tuple(chr(draw.next_byte()) for _ in range(length))
+            return jpamb.case.Array(jvm.Char(), values)
+        case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+            length = draw.next_byte() % (MAX_FUZZ_LENGTH + 1)
+            return jpamb.case.String(
+                "".join(chr(draw.next_byte()) for _ in range(length))
             )
+        case a:
+            raise NotImplementedError(f"{a!r}")
 
-        if non_timeout_queries.issubset(behaviors):
-            break
 
-        if (
-            len(behaviors) == prev_outcomes
-            and len(covered_sites) == prev_sites
-            and not expanded
-        ):
-            break
+# Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.2
+def ints_in_method(method: jvm.Method) -> set[int]:
+    ints = set()
+    for opcode in method.opcodes:
+        match opcode:
+            case jvm.Push(type=jvm.Int(), value=value):
+                ints.add(value)
+            case jvm.Incr(amount=amount):
+                ints.add(amount)
+    return ints
+
+
+def strings_in_method(method: jvm.Method) -> list[str]:
+    return [
+        opcode.value
+        for opcode in method.opcodes
+        if isinstance(opcode, jvm.Push) and isinstance(opcode.value, str)
+    ]
+
+
+# fuzz_type reads these bytes as the constant in every parameter.
+def constant_code(params: list[jvm.Type], constant: int | str) -> bytes:
+    number = constant if isinstance(constant, int) else 0
+    if isinstance(constant, str):
+        text = bytes(ord(char) % 256 for char in constant[:MAX_FUZZ_LENGTH])
+    else:
+        text = bytes([constant]) if 0 <= constant < 256 else b""
+    code = b""
+    for param in params:
+        match param:
+            case jvm.Int():
+                code += number.to_bytes(4, signed=True)
+            case jvm.Boolean():
+                code += bytes([1 if number else 0])
+            case jvm.Array(contains=jvm.Int()):
+                code += bytes([1]) + number.to_bytes(4, signed=True)
+            case _:
+                code += bytes([len(text)]) + text
+    return code
+
+
+@dataclass(frozen=True)
+class Trace:
+    outcome: str
+    instructions: frozenset[jvmc.PC]
+    # (pc, operand, low, high) means the operand at pc was in [low, high].
+    ranges: frozenset[tuple[jvmc.PC, int, int, int]] = frozenset()
+    # The executed instructions in order.
+    path: tuple[jvmc.PC, ...] = ()
+
+
+# A site is split at the comparisons in its own method. The cache is there because
+# syntactic_constants reads the Java source every time.
+@functools.cache
+def comparisons_in_method(methodid: jvm.AbsMethodID) -> frozenset[int]:
+    return constants_for_method_id(methodid.encode(), follow_calls=False).comparisons
+
+
+# arraySumIsLarge compares the sum with 300. With "three" its points are 0 and 300 and
+# the ranges are [-2**31, -1], [0, 0], [1, 299], [300, 300] and [301, 2**31 - 1].
+# For a constant c, "three" uses c as a point and "boundary" uses c-1, c and c+1.
+def split_points(constants: set[int], split: str) -> list[int]:
+    # Source: https://courses.compute.dtu.dk/02242/topics/unbounded-static-analysis.html#sec:2.3
+    points = set()
+    for constant in constants | {0}:
+        match split:
+            case "three":
+                points.add(constant)
+            case "boundary":
+                points.update({constant - 1, constant, constant + 1})
+            case a:
+                raise NotImplementedError(f"{a!r}")
+    return sorted(point for point in points if -(2**31) <= point < 2**31)
+
+
+def range_of(value: int, points: list[int]) -> tuple[int, int]:
+    index = bisect.bisect_left(points, value)
+    if index < len(points) and points[index] == value:
+        return (value, value)
+    low = points[index - 1] + 1 if index > 0 else -(2**31)
+    high = points[index] - 1 if index < len(points) else 2**31 - 1
+    return (low, high)
+
+
+# The operands we record a range for, from the stack values with the top last.
+def operands(opcode: jvm.Opcode, values: Sequence) -> list:
+    match opcode:
+        case jvm.If() | jvm.Binary(operant=jvm.BinaryOpr.Div | jvm.BinaryOpr.Rem):
+            return [values[-2], values[-1]]
+        case jvm.Ifz():
+            return [values[-1]]
+        case jvm.ArrayLoad():
+            # The stack is array, index.
+            return [values[-1]]
+        case jvm.ArrayStore():
+            # The stack is array, index, value.
+            return [values[-2]]
+        case _:
+            return []
+
+
+def run(
+    bc: jpamb.Bytecode,
+    methodid: jvm.AbsMethodID,
+    input: jpamb.case.Input,
+    *,
+    max_steps: int,
+    split: str | None = None,
+) -> Trace:
+    state = initial(bc, methodid, input)
+    instructions = set()
+    ranges = set()
+    path = []
+    points = {}
+    for _ in range(max_steps):
+        frame = state.frames.peek()
+        if split is not None:
+            method = frame.pc.method
+            if method not in points:
+                points[method] = split_points(set(comparisons_in_method(method)), split)
+            # The operands are read before step pops them.
+            stack = frame.stack.operands
+            for position, operand in enumerate(operands(bc[frame.pc], stack)):
+                # Reference comparisons like if_acmpeq have no int range.
+                if isinstance(operand, jvmc.StackInt):
+                    low, high = range_of(operand.value, points[method])
+                    ranges.add((frame.pc, position, low, high))
+        pc, state = step(bc, state)
+        instructions.add(pc)
+        path.append(pc)
+        if isinstance(state, str):
+            return Trace(state, frozenset(instructions), frozenset(ranges), tuple(path))
+    return Trace("*", frozenset(instructions), frozenset(ranges), tuple(path))
+
+
+# Source: https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:4.3
+@dataclass
+class Corpus:
+    params: list[jvm.Type]
+    rand: random.Random
+    interesting: list[bytes] = field(default_factory=list)
+    coverage: set = field(default_factory=set)
+
+    def fuzz_input(self, code: bytes) -> jpamb.case.Input:
+        draw = Draw(code)
+        return jpamb.case.Input(tuple(fuzz_type(draw, param) for param in self.params))
+
+    def next(self) -> bytes:
+        code = bytearray(self.rand.choice(self.interesting))
+        match self.rand.randrange(3):
+            case 0 if code:
+                code[self.rand.randrange(len(code))] = self.rand.randrange(256)
+            case 1 if code:
+                del code[self.rand.randrange(len(code))]
+            case _:
+                code.append(self.rand.randrange(256))
+        return bytes(code)
+
+    def add(self, code: bytes, coverage: set) -> bool:
+        if coverage <= self.coverage:
+            return False
+        self.coverage |= coverage
+        self.interesting.append(code)
+        return True
+
+
+def analyse():
+    """The dynamic analysis, e.g. in this case a (dumb) fuzzer."""
+    methodid = jpamb.getmethodid(
+        "JK_Analyse",
+        "1.0",
+        "Joachim",
+        ["dynamic", "python"],
+        for_science=True
+    )
+
+    suite, eff = jpamb.setup()
+    bc = jpamb.Bytecode(suite, eff, {})
+
+    MAX_STEPS = 200
+
+    import random
+
+    # Make the randomness deterministic
+    rand = random.Random(0)
+
+    behaviors = set()
+    # Try 10 random inputs
+    for i in range(10):
+        input = fuzz_input(rand, methodid)
+        state = initial(bc, methodid, input)
+
+        for x in range(MAX_STEPS):
+            _, state = step(bc, state)
+            if isinstance(state, str):
+                behaviors.add(state)
+                break
 
     for query in jpamb.QUERIES:
         if query in behaviors:
