@@ -41,13 +41,19 @@ def test_call_forgets_the_elements_of_a_passed_array():
     assert state.forget_elements([passed]).locals[0].elem_iv == Interval.top()
 
 
-# n != 0 is checked before 1 / n so n (operand 1) is never 0 at the division.
-def test_bound_leaves_out_zero_at_the_division_after_n_not_zero():
+# n != 0 is checked before 1 / n so n (operand 1) is never 0 at the division. Only
+# the interval sets can leave out a point inside an interval.
+@pytest.mark.parametrize(
+    ("domain", "zero_in_bound"), [("sets", False), ("outliers", True)]
+)
+def test_only_interval_sets_leave_out_zero_at_the_division_after_n_not_zero(
+    domain, zero_in_bound
+):
     suite = jpamb.Suite.from_workdir(REPO)
     bc = jpamb.Bytecode(suite, jpamb.Effect(None), {})
     methodid = jvm.AbsMethodID.decode("jpamb.cases.Simple.checkBeforeDivideByN2:(I)I")
-    oracle = RangeCoverageOracle.build(bc, methodid, "three")
-    assert (PC(methodid, 4), 1, 0, 0) not in oracle.upper_bound
+    oracle = RangeCoverageOracle.build(bc, methodid, "three", domain)
+    assert ((PC(methodid, 4), 1, 0, 0) in oracle.upper_bound) == zero_in_bound
 
 
 def test_backwards_through_the_loop_in_division_loop():

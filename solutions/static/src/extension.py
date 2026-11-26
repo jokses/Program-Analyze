@@ -3,19 +3,32 @@ import contextlib
 import json
 import statistics
 import sys
+from dataclasses import dataclass
 
 import dynamic
 import fuzzer
-from unbounded import Interval, RangeCoverageOracle, UnboundedIntervalAnalysis
+from unbounded import DOMAINS, Interval, RangeCoverageOracle, UnboundedIntervalAnalysis
 
 import jpamb
 import jvm
 
-# Group 5 stops the binary search at 20 values and test all of them. Going backwards
-# tests at most as many.
+# Group 5 stop the binary search at about 20 values and test all of them. Going
+# backwards tests at most as many for each kept input and int parameter.
 CANDIDATES = 20
 # Fuzzing for longer gets ten times as many runs without new coverage.
 LONGER = 10 * fuzzer.MAX_RUNS_SINCE_NEW
+# Each way gives the runs it needed to reach a target, or None. Combined goes
+# backwards first and falls back on the binary search and counts the runs of both.
+WAYS = ("backwards", "binary_search", "combined", "longer")
+
+
+@dataclass(frozen=True)
+class Attempt:
+    runs: int
+    reached: bool
+
+    def runs_if_reached(self) -> int | None:
+        return self.runs if self.reached else None
 
 
 def candidates(iv: Interval) -> list[int]:
@@ -31,19 +44,19 @@ def with_value(input: jpamb.case.Input, index: int, value: int) -> jpamb.case.In
     return jpamb.case.Input(tuple(values))
 
 
-# The number of runs until one of the values reaches the target, or None.
-def runs_to_reach(bc, methodid, base, index, values, target, split) -> int | None:
+# Runs the values one by one until one reaches the target.
+def try_values(bc, methodid, base, index, values, target, split) -> Attempt:
     for runs, value in enumerate(values, start=1):
         input = with_value(base, index, value)
         trace = dynamic.run(
             bc, methodid, input, max_steps=fuzzer.MAX_STEPS, split=split
         )
         if target in trace.ranges:
-            return runs
-    return None
+            return Attempt(runs, True)
+    return Attempt(len(values), False)
 
 
-def backwards(bc, methodid, oracle, kept, int_params, target, split):
+def backwards(bc, methodid, oracle, kept, int_params, target, split) -> Attempt:
     runs = 0
     for base in kept:
         path = dynamic.run(bc, methodid, base, max_steps=fuzzer.MAX_STEPS).path
@@ -51,12 +64,11 @@ def backwards(bc, methodid, oracle, kept, int_params, target, split):
             iv = oracle.analysis.solve_uncovered_range(target, path, index)
             if iv.is_bot() or iv == Interval.top():
                 continue
-            values = candidates(iv)
-            found = runs_to_reach(bc, methodid, base, index, values, target, split)
-            if found is not None:
-                return runs + found
-            runs += len(values)
-    return None
+            tried = try_values(bc, methodid, base, index, candidates(iv), target, split)
+            runs += tried.runs
+            if tried.reached:
+                return Attempt(runs, True)
+    return Attempt(runs, False)
 
 
 # The halving does not depend on the seed, so the seeds share it.
@@ -84,17 +96,16 @@ def halve(bc, methodid, index, target, split) -> Interval:
     return HALVED[key]
 
 
-def binary_search(bc, methodid, base, int_params, target, split):
+def binary_search(bc, methodid, base, int_params, target, split) -> Attempt:
     runs = 0
     for index in int_params:
         iv = halve(bc, methodid, index, target, split)
         if iv.max - iv.min < CANDIDATES:
-            values = candidates(iv)
-            found = runs_to_reach(bc, methodid, base, index, values, target, split)
-            if found is not None:
-                return runs + found
-            runs += len(values)
-    return None
+            tried = try_values(bc, methodid, base, index, candidates(iv), target, split)
+            runs += tried.runs
+            if tried.reached:
+                return Attempt(runs, True)
+    return Attempt(runs, False)
 
 
 def encoded(target):
@@ -128,20 +139,24 @@ def extend(bc, methodid, oracle, seed, split, int_params):
     kept = [jpamb.case.Input.decode(code) for code in first.kept_inputs]
     rows = []
     for target in targets:
+        back = backwards(bc, methodid, oracle, kept, int_params, target, split)
+        binary = (
+            binary_search(bc, methodid, kept[0], int_params, target, split)
+            if kept
+            else Attempt(0, False)
+        )
+        combined = (
+            back if back.reached else Attempt(back.runs + binary.runs, binary.reached)
+        )
         rows.append(
             {
                 "method": methodid.encode(),
                 "seed": seed,
                 "split": split,
                 "target": encoded(target),
-                "backwards": backwards(
-                    bc, methodid, oracle, kept, int_params, target, split
-                ),
-                "binary_search": binary_search(
-                    bc, methodid, kept[0], int_params, target, split
-                )
-                if kept
-                else None,
+                "backwards": back.runs_if_reached(),
+                "binary_search": binary.runs_if_reached(),
+                "combined": combined.runs_if_reached(),
                 "longer": longer_runs.get(encoded(target)),
             }
         )
@@ -151,7 +166,7 @@ def extend(bc, methodid, oracle, seed, split, int_params):
 def summary(rows, file):
     rows = [row for row in rows if "error" not in row]
     print("targets", len(rows), file=file)
-    for way in ("backwards", "binary_search", "longer"):
+    for way in WAYS:
         runs = [row[way] for row in rows if row[way] is not None]
         median = statistics.median(runs) if runs else "-"
         print(way, "reached", len(runs), "median runs", median, file=file)
@@ -161,7 +176,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Try to reach the ranges the range fuzzer left uncovered."
     )
-    args, bc, methods = fuzzer.parse_methods(parser)
+    args, bc, methods = fuzzer.parse_methods(parser, tuple(DOMAINS))
 
     rows = []
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
@@ -173,7 +188,9 @@ def main():
             if not int_params:
                 continue
             try:
-                oracle = RangeCoverageOracle.build(bc, methodid, args.split)
+                oracle = RangeCoverageOracle.build(
+                    bc, methodid, args.split, args.domain
+                )
                 new_rows = []
                 for seed in range(args.seeds):
                     new_rows += extend(
@@ -189,6 +206,6 @@ def main():
                     }
                 ]
             for row in new_rows:
-                out.write(json.dumps(row) + "\n")
+                out.write(json.dumps({**row, "domain": args.domain}) + "\n")
             rows += new_rows
     summary(rows, sys.stderr)

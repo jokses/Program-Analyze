@@ -45,6 +45,8 @@ class Result:
     version: str
     seed: int
     split: str = ""
+    # Only with a bound from the interval analysis.
+    domain: str = ""
     runs: int = 0
     cpu_seconds: float = 0.0
     stop_reason: str = ""
@@ -180,13 +182,16 @@ def all_methods(suite: jpamb.Suite, *, eff: jpamb.Effect) -> list[jvm.AbsMethodI
 
 
 # The options fuzzer and fuzzer-extension share, and the methods they choose.
-def parse_methods(parser: argparse.ArgumentParser):
+# domains are the names of the interval analysis' domains and the first is the default.
+def parse_methods(parser: argparse.ArgumentParser, domains: tuple[str, ...] = ()):
     parser.add_argument(
         "methods", nargs="*", help="like 'jpamb.cases.Simple.assertFalse:()V'"
     )
     parser.add_argument("--all", action="store_true", help="every method in cases.txt")
     parser.add_argument("--seeds", type=int, default=10)
     parser.add_argument("--split", choices=["three", "boundary"], default="three")
+    if domains:
+        parser.add_argument("--domain", choices=domains, default=domains[0])
     parser.add_argument("--out", help="the JSON lines file, instead of stdout")
     args = parser.parse_args()
     suite, eff = jpamb.setup()
@@ -197,14 +202,16 @@ def parse_methods(parser: argparse.ArgumentParser):
     return args, jpamb.Bytecode(suite, eff, {}), methods
 
 
-# bound_of(bc, methodid, split) gives the ranges the interval analysis can reach, in
-# the format of Trace.ranges. The analysis passes it in because it depends on the fuzzer.
-def main(bound_of=None):
+# bound_of(bc, methodid, split, domain) gives the ranges the interval analysis can
+# reach, in the format of Trace.ranges. The analysis passes it in because it depends
+# on the fuzzer.
+def main(bound_of=None, domains: tuple[str, ...] = ()):
     parser = argparse.ArgumentParser(
         description="Fuzz JPAMB methods and write one JSON row per method, version and seed."
     )
     parser.add_argument("--versions", default=",".join(VERSIONS))
-    args, bc, methods = parse_methods(parser)
+    args, bc, methods = parse_methods(parser, domains)
+    domain = args.domain if domains else ""
 
     # Absolute menace of a loop composition as this would never ever be acceptable theoretically but it works pratically.
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
@@ -215,7 +222,7 @@ def main(bound_of=None):
             if bound_of is not None:
                 start = time.process_time()
                 try:
-                    bound = frozenset(bound_of(bc, methodid, args.split))
+                    bound = frozenset(bound_of(bc, methodid, args.split, domain))
                 except Exception as error:  # ruff: ignore[BLE001]
                     analysis_error = error
                 analysis_seconds = round(time.process_time() - start, 3)
@@ -234,7 +241,9 @@ def main(bound_of=None):
                                 split=args.split,
                                 bound=bound,
                             )
-                            result = replace(result, analysis_seconds=analysis_seconds)
+                            result = replace(
+                                result, domain=domain, analysis_seconds=analysis_seconds
+                            )
                         except Exception as crash:  # ruff: ignore[BLE001]
                             # The interpreter and fuzz_input raise on what they do not
                             # support.
@@ -245,6 +254,7 @@ def main(bound_of=None):
                             version,
                             seed,
                             split=args.split,
+                            domain=domain,
                             stop_reason="crash",
                             error=repr(error),
                         )

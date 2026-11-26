@@ -231,7 +231,7 @@ def designed_numbers(rows):
         # A split that cannot show the range gives no targets.
         if not targets:
             continue
-        for way in ("backwards", "binary_search", "longer"):
+        for way in extension.WAYS:
             runs = [row[way] for row in targets if row[way] is not None]
             print(
                 designed["what"],

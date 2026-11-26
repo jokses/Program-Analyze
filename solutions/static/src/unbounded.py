@@ -14,6 +14,7 @@ from pathlib import Path
 
 from absIntervals import INT_MAX, INT_MIN, Interval, wrap_or_top
 from absIntervalSets import IntervalSet
+from absOutliers import IntervalOutliers
 from dynamic import comparisons_in_method, operands, range_of, split_points
 from syntactic_constants import MethodConstants
 
@@ -104,7 +105,9 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
 
 
 # Next to its interval each value has pieces. A range between two pieces, like 0
-# when n != 0, is not in the bound.
+# when n != 0, is not in the bound. --domain picks the pieces once for the whole run,
+# and IntervalOutliers is the comparison that cannot leave out a point inside.
+DOMAINS = {"sets": IntervalSet, "outliers": IntervalOutliers}
 Pieces = IntervalSet
 
 
@@ -114,7 +117,7 @@ def pieces_from_interval(iv: Interval) -> Pieces:
 
 # A value is in both the interval and the pieces, so each one limits the other.
 def reduce_pair(iv: Interval, out: Pieces) -> tuple[Interval, Pieces]:
-    out = Pieces.make(iv & piece for piece in out.pieces())
+    out = type(out).make(iv & piece for piece in out.pieces())
     pieces = out.pieces()
     if not pieces:
         return Interval.bot(), out
@@ -142,7 +145,7 @@ def negate_interval(iv: Interval) -> Interval:
 # Each piece goes through the same function as the interval. Trying only some values
 # of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
 def map_pieces(out: Pieces, fn) -> Pieces:
-    return Pieces.make(fn(piece) for piece in out.pieces())
+    return type(out).make(fn(piece) for piece in out.pieces())
 
 
 @dataclass(frozen=True)
@@ -164,6 +167,15 @@ class Val:
         iv, out = reduce_pair(self.iv, out)
         object.__setattr__(self, "iv", iv)
         object.__setattr__(self, "out", out)
+
+    # Built when asked so the pieces come from the domain of the run.
+    @classmethod
+    def bot(cls) -> Val:
+        return cls(Interval.bot(), may_nonnull=False, elem_iv=Interval.bot())
+
+    @classmethod
+    def top(cls) -> Val:
+        return cls(Interval.top(), may_null=True)
 
     def join(
         self,
@@ -222,10 +234,6 @@ def check_index(ref: Val, idx: Val, out: list) -> bool:
 # Library calls that cannot fail or loop so they add no outcomes.
 SAFE_CALLS = ("Object.<init>", "AssertionError.<init>", "StringBuilder.")
 
-BOT_VAL = Val(Interval.bot(), None, False, False, Interval.bot(), None, None, None, False)
-TOP_VAL = Val(Interval.top(), None, True, True, Interval.top(), None, None, None, False)
-
-
 @dataclass(frozen=True)
 class State(sexpr.AsSExpr):
     locals: tuple[Val, ...]
@@ -243,8 +251,8 @@ class State(sexpr.AsSExpr):
         if len(self.stack) != len(other.stack):
             raise AnalysisError(f"stack height mismatch: {len(self.stack)} vs {len(other.stack)}")
         n_loc = max(len(self.locals), len(other.locals))
-        l1 = self.locals + (BOT_VAL,) * (n_loc - len(self.locals))
-        l2 = other.locals + (BOT_VAL,) * (n_loc - len(other.locals))
+        l1 = self.locals + (Val.bot(),) * (n_loc - len(self.locals))
+        l2 = other.locals + (Val.bot(),) * (n_loc - len(other.locals))
         return State(
             tuple(a.join(b, K, narrow) for a, b in zip(l1, l2)),
             tuple(a.join(b, K, narrow) for a, b in zip(self.stack, other.stack)),
@@ -259,12 +267,12 @@ class State(sexpr.AsSExpr):
         return self.stack[-n:], State(self.locals, self.stack[:-n])
 
     def load(self, idx: int) -> Val:
-        return self.locals[idx] if idx < len(self.locals) else TOP_VAL
+        return self.locals[idx] if idx < len(self.locals) else Val.top()
 
     def store(self, idx: int, v: Val, preserve_bound: bool = False) -> State:
         locs = list(self.locals)
         if idx >= len(locs):
-            locs.extend([BOT_VAL] * (idx - len(locs) + 1))
+            locs.extend([Val.bot()] * (idx - len(locs) + 1))
         locs[idx] = v
         new_locs = tuple(
             replace(
@@ -392,7 +400,7 @@ class UnboundedIntervalAnalysis:
 
     def _initial_state(self) -> State:
         method = self.bc.getmethod(self.entry_method)
-        locs = [BOT_VAL] * method.max_locals
+        locs = [Val.bot()] * method.max_locals
         params = self.entry_method.extension.params
 
         if self.inputs is None:
@@ -589,7 +597,7 @@ class UnboundedIntervalAnalysis:
         return False
 
     def _wake_callers(self, callee: jvm.AbsMethodID, ret_val: Val) -> list[tuple[PC, State]]:
-        old_ret = self.return_vals.get(callee, BOT_VAL)
+        old_ret = self.return_vals.get(callee, Val.bot())
         joined_ret = old_ret.join(ret_val)
         if joined_ret == old_ret:
             return []
@@ -621,7 +629,7 @@ class UnboundedIntervalAnalysis:
             self.call_sites.setdefault(m, set()).add(pc)
             if m in self.return_vals:
                 out.append((pc + 1, after.push(self.return_vals[m])))
-        locs = args + [BOT_VAL] * (callee.max_locals - len(args))
+        locs = args + [Val.bot()] * (callee.max_locals - len(args))
         out.append((PC(m, 0), State(tuple(locs), ())))
         return out
 
@@ -666,7 +674,7 @@ class UnboundedIntervalAnalysis:
             case jvm.Incr(index=i, amount=a):
                 v = state.load(i)
                 _, inc_out = pieces_arithmetic(
-                    v.out, pieces_from_interval(Interval.const(a)), jvm.BinaryOpr.Add
+                    v.out, type(v.out).make([Interval.const(a)]), jvm.BinaryOpr.Add
                 )
                 keep_bound = v.bounded_by if a <= 0 else None
                 for result in v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add):
@@ -735,7 +743,7 @@ class UnboundedIntervalAnalysis:
                 if field.extension.name == "$assertionsDisabled":
                     out.append((pc + 1, state.push(Val(Interval.const(0)))))
                 else:
-                    out.append((pc + 1, state.push(TOP_VAL)))
+                    out.append((pc + 1, state.push(Val.top())))
 
             case jvm.New(classname=cls):
                 if "AssertionError" in str(cls):
@@ -841,7 +849,9 @@ class UnboundedIntervalAnalysis:
                     self.has_unknown_call = True
                     self.outcomes.update(ALL_OUTCOMES)
                     returns_void = m.extension.return_type is None
-                    out.append((pc + 1, after if returns_void else after.push(TOP_VAL)))
+                    out.append(
+                        (pc + 1, after if returns_void else after.push(Val.top()))
+                    )
                 else:
                     out.extend(called)
 
@@ -885,7 +895,7 @@ class UnboundedIntervalAnalysis:
                                 out.append((pc + 1, after.push(Val(ch_iv))))
                             case _:
                                 out.append(
-                                    (pc + 1, after if returns_void else after.push(TOP_VAL))
+                                    (pc + 1, after if returns_void else after.push(Val.top()))
                                 )
                     elif classname_str == "jpamb.utils.Smith":
                         self.has_unknown_call = True
@@ -914,7 +924,7 @@ class UnboundedIntervalAnalysis:
                                 self.has_unknown_call = True
                                 self.outcomes.update(ALL_OUTCOMES)
                             out.append(
-                                (pc + 1, after if returns_void else after.push(TOP_VAL))
+                                (pc + 1, after if returns_void else after.push(Val.top()))
                             )
 
             case _:
@@ -1148,8 +1158,14 @@ class RangeCoverageOracle:
 
     @classmethod
     def build(
-        cls, bc: jpamb.Bytecode, methodid: jvm.AbsMethodID, split: str = "three"
+        cls,
+        bc: jpamb.Bytecode,
+        methodid: jvm.AbsMethodID,
+        split: str = "three",
+        domain: str = "sets",
     ) -> RangeCoverageOracle:
+        global Pieces
+        Pieces = DOMAINS[domain]
         analysis = UnboundedIntervalAnalysis(bc, methodid, None).run()
         return cls(analysis, analysis.reachable_range_tuples(split=split))
 
