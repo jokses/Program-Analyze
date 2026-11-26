@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 from typing import Any
-
+from collections.abc import Iterable
 import jpamb
 import jvm
 
@@ -57,7 +57,66 @@ def _array_element_type(arr_type: Any) -> Any:
         f"Cannot find element type on {type(arr_type).__name__}: {vars(arr_type)}"
     )
 
+def comparisons_in_method(method: jvm.AbsMethodID) -> set[int]:
+    """Collect integer constants compared against in a method's bytecode."""
+    suite, eff = jpamb.setup()
+    bc = jpamb.Bytecode(suite, eff, {})
+    m = bc.getmethod(method)
+    consts: set[int] = set()
+    opcodes = m.opcodes
+    for idx, opr in enumerate(opcodes):
+        match opr:
+            case jvm.Ifz():
+                consts.add(0)
+            case jvm.If():
+                if idx > 0 and isinstance(opcodes[idx - 1], jvm.Push):
+                    val = opcodes[idx - 1].value
+                    if isinstance(val, int) and not isinstance(val, bool):
+                        consts.add(val)
+    return consts
 
+
+def operands(opr: Any, stack: tuple[Any, ...]) -> list[Any]:
+    """Return the stack operands consumed by a bytecode instruction in positional order."""
+    match opr:
+        case jvm.Ifz() | jvm.Negate() | jvm.Cast() | jvm.ArrayLength():
+            return [stack[-1]] if len(stack) >= 1 else []
+        case jvm.If() | jvm.Binary() | jvm.Bitopr() | jvm.ArrayLoad():
+            return [stack[-2], stack[-1]] if len(stack) >= 2 else []
+        case jvm.ArrayStore():
+            return [stack[-3], stack[-2], stack[-1]] if len(stack) >= 3 else []
+        case _:
+            return []
+
+
+def split_points(constants: Iterable[int], split: str = "three") -> list[int]:
+    """Build sorted split boundary points from comparison constants."""
+    pts: set[int] = set()
+    for c in constants:
+        if split == "one":
+            pts.add(c)
+        elif split == "two":
+            pts.update({c, c + 1})
+        else:  # "three": isolates c as [c, c], leaving (..., c - 1] and [c + 1, ...)
+            pts.update({c - 1, c, c + 1})
+    return sorted(p for p in pts if -(1 << 31) <= p <= (1 << 31) - 1)
+
+
+def range_of(val: int, pts: list[int]) -> tuple[int, int]:
+    """Return the (low, high) bucket interval containing `val` induced by `pts`."""
+    int_min = -(1 << 31)
+    int_max = (1 << 31) - 1
+    if not pts:
+        return (int_min, int_max)
+
+    lo = int_min
+    for p in pts:
+        if val < p:
+            return (lo, p - 1)
+        if val == p:
+            return (p, p)
+        lo = p + 1
+    return (lo, int_max)
 def _is_smith_type(param_type: Any) -> bool:
     """Return True when a JVM parameter descriptor represents jpamb.utils.Smith."""
     names = _param_type_names(param_type)
