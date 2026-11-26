@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Self
 
 import absIntervals
-from absOutliers import IntervalOutliers
+from absIntervalSets import IntervalSet
 from dynamic import comparisons_in_method, operands, range_of, split_points
 from syntactic_constants import MethodConstants
 from tools import Abstraction, Lattice
@@ -450,18 +450,18 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
             return Interval.top()
 
 
-# The outliers keep a value far from the interval as a single point, like 1234 next
-# to [0, 4] in test_make_keeps_far_point_as_outlier, so a range that lies fully
-# between them is not in the bound.
-def outliers_from_interval(iv: Interval) -> IntervalOutliers:
-    return IntervalOutliers.make([absIntervals.Interval(iv.min, iv.max)])
+# Next to its interval each value has pieces. A range between two pieces, like 0
+# when n != 0, is not in the bound.
+Pieces = IntervalSet
 
 
-# A value is in both the interval and the outliers, so each one limits the other.
-def reduce_pair(
-    iv: Interval, out: IntervalOutliers
-) -> tuple[Interval, IntervalOutliers]:
-    out = IntervalOutliers.make(
+def pieces_from_interval(iv: Interval) -> Pieces:
+    return Pieces.make([absIntervals.Interval(iv.min, iv.max)])
+
+
+# A value is in both the interval and the pieces, so each one limits the other.
+def reduce_pair(iv: Interval, out: Pieces) -> tuple[Interval, Pieces]:
+    out = Pieces.make(
         absIntervals.Interval(max(iv.min, p.min), min(iv.max, p.max))
         for p in out.pieces()
     )
@@ -471,11 +471,11 @@ def reduce_pair(
     return Interval(min(p.min for p in pieces), max(p.max for p in pieces)), out
 
 
-# The errors and the value of a op b on the outliers. The value is None when the
-# outliers give only errors.
-def outliers_arithmetic(
-    a: IntervalOutliers, b: IntervalOutliers, op: jvm.BinaryOpr
-) -> tuple[set[str], IntervalOutliers | None]:
+# The errors and the value of a op b on the pieces. The value is None when the
+# pieces give only errors.
+def pieces_arithmetic(
+    a: Pieces, b: Pieces, op: jvm.BinaryOpr
+) -> tuple[set[str], Pieces | None]:
     results = a.arithmetic(b, op)
     values = [r for r in results if not isinstance(r, str)]
     return {r for r in results if isinstance(r, str)}, next(iter(values), None)
@@ -490,9 +490,9 @@ def negate_interval(iv: Interval) -> Interval:
 
 # Each piece goes through the same function as the interval. Trying only some values
 # of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
-def map_pieces(out: IntervalOutliers, fn) -> IntervalOutliers:
+def map_pieces(out: Pieces, fn) -> Pieces:
     pieces = (fn(Interval(piece.min, piece.max)) for piece in out.pieces())
-    return IntervalOutliers.make(absIntervals.Interval(p.min, p.max) for p in pieces)
+    return Pieces.make(absIntervals.Interval(p.min, p.max) for p in pieces)
 
 
 @dataclass(frozen=True)
@@ -506,11 +506,11 @@ class Val:
     bounded_by: int | None = None
     alloc_id: int | None = None
     is_ref: bool = False
-    # None gives the outliers of iv.
-    out: IntervalOutliers | None = None
+    # None gives iv as one piece.
+    out: Pieces | None = None
 
     def __post_init__(self):
-        out = outliers_from_interval(self.iv) if self.out is None else self.out
+        out = pieces_from_interval(self.iv) if self.out is None else self.out
         iv, out = reduce_pair(self.iv, out)
         object.__setattr__(self, "iv", iv)
         object.__setattr__(self, "out", out)
@@ -1015,8 +1015,8 @@ class UnboundedIntervalAnalysis:
 
             case jvm.Incr(index=i, amount=a):
                 v = state.load(i)
-                _, inc_out = outliers_arithmetic(
-                    v.out, outliers_from_interval(Interval.const(a)), jvm.BinaryOpr.Add
+                _, inc_out = pieces_arithmetic(
+                    v.out, pieces_from_interval(Interval.const(a)), jvm.BinaryOpr.Add
                 )
                 keep_bound = v.bounded_by if a <= 0 else None
                 for r in v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add):
@@ -1061,8 +1061,8 @@ class UnboundedIntervalAnalysis:
             case jvm.Binary(operant=op):
                 [a, b], after = state.pop(2)
                 results = a.iv.arithmetic(b.iv, op)
-                out_errors, value_out = outliers_arithmetic(a.out, b.out, op)
-                # An error needs both the interval and the outliers to allow it.
+                out_errors, value_out = pieces_arithmetic(a.out, b.out, op)
+                # An error needs both the interval and the pieces to allow it.
                 out.extend(sorted({r for r in results if isinstance(r, str)} & out_errors))
                 values = [r for r in results if isinstance(r, Interval) and not r.is_bot()]
                 if values:

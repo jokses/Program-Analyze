@@ -11,7 +11,7 @@ from unbounded import (
     cast_interval,
     map_pieces,
     negate_interval,
-    outliers_from_interval,
+    pieces_from_interval,
 )
 
 import jpamb
@@ -41,6 +41,15 @@ def test_call_forgets_the_elements_of_a_passed_array():
     assert state.forget_elements([passed]).locals[0].elem_iv == Interval.top()
 
 
+# n != 0 is checked before 1 / n so n (operand 1) is never 0 at the division.
+def test_bound_leaves_out_zero_at_the_division_after_n_not_zero():
+    suite = jpamb.Suite.from_workdir(REPO)
+    bc = jpamb.Bytecode(suite, jpamb.Effect(None), {})
+    methodid = jvm.AbsMethodID.decode("jpamb.cases.Simple.checkBeforeDivideByN2:(I)I")
+    oracle = RangeCoverageOracle.build(bc, methodid, "three")
+    assert (PC(methodid, 4), 1, 0, 0) not in oracle.upper_bound
+
+
 def test_backwards_through_the_loop_in_division_loop():
     suite = jpamb.Suite.from_workdir(REPO)
     bc = jpamb.Bytecode(suite, jpamb.Effect(None), {})
@@ -64,7 +73,7 @@ def to_char(iv):
     return cast_interval(iv, Interval(0, 65535))
 
 
-# The value Java gives has to be in the outliers after the operation.
+# The value Java gives has to be in the pieces after the operation.
 @pytest.mark.parametrize(
     ("operation", "low", "high", "java"),
     [
@@ -73,6 +82,6 @@ def to_char(iv):
         (to_char, -1, 5, 0),
     ],
 )
-def test_outlier_pieces_keep_the_value_java_gives(operation, low, high, java):
-    out = map_pieces(outliers_from_interval(Interval(low, high)), operation)
-    assert out.hasValue(java)
+def test_pieces_keep_the_value_java_gives(operation, low, high, java):
+    out = map_pieces(pieces_from_interval(Interval(low, high)), operation)
+    assert any(piece.min <= java <= piece.max for piece in out.pieces())
