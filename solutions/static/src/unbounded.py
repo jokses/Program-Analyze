@@ -11,22 +11,17 @@ import traceback
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Self
 
-import absIntervals
+from absIntervals import INT_MAX, INT_MIN, Interval, wrap_or_top
 from absIntervalSets import IntervalSet
 from dynamic import comparisons_in_method, operands, range_of, split_points
 from syntactic_constants import MethodConstants
-from tools import Abstraction, Lattice
 
 import jpamb
 import jvm
-import jvm.state as jvms
 import sexpr
 from jvm.state import PC
 
-INT_MIN = -(2**31)
-INT_MAX = (2**31) - 1
 INT_TYPES = {"int", "i", "boolean", "z", "char", "c", "short", "s", "byte", "b"}
 ALL_OUTCOMES = {"ok", "assertion error", "divide by zero", "null pointer", "out of bounds"}
 
@@ -62,348 +57,6 @@ def load_syntactic_constants(method_id: str) -> MethodConstants | None:
     if entry is None:
         return None
     return MethodConstants(frozenset(entry["constants"]), frozenset(entry["comparisons"]))
-
-
-def wrap_or_top(lo: int, hi: int) -> Interval:
-    if lo < INT_MIN or hi > INT_MAX:
-        return Interval(INT_MIN, INT_MAX)
-    return Interval(lo, hi)
-
-
-@dataclass(frozen=True)
-class Interval(Abstraction, Lattice):
-    min: int
-    max: int
-
-    def __post_init__(self):
-        if self.min > self.max:
-            object.__setattr__(self, "min", 1)
-            object.__setattr__(self, "max", 0)
-
-    @classmethod
-    def bot(cls) -> Self:
-        return cls(1, 0)
-
-    @classmethod
-    def top(cls) -> Self:
-        return cls(INT_MIN, INT_MAX)
-
-    @classmethod
-    def nonneg(cls) -> Self:
-        return cls(0, INT_MAX)
-
-    @classmethod
-    def const(cls, c: int) -> Self:
-        return cls(c, c)
-
-    def is_bot(self) -> bool:
-        return self.min > self.max
-
-    @property
-    def single(self) -> bool:
-        return self.min == self.max
-
-    def __str__(self) -> str:
-        if self.is_bot():
-            return "⊥"
-
-        def bound(v: int) -> str:
-            return "-inf" if v == INT_MIN else "+inf" if v == INT_MAX else str(v)
-
-        return f"[{bound(self.min)}, {bound(self.max)}]"
-
-    def __sexpr__(self) -> str:
-        return str(self)
-
-    @classmethod
-    def abstract(cls, values: Iterable[jvms.StackValue]) -> Self:
-        nums = [v.value for v in values]
-        if not nums:
-            return cls(1, 0)
-        return cls(min(nums), max(nums))
-
-    def __contains__(self, value: jvms.StackValue | int) -> bool:
-        v = value.value if isinstance(value, jvms.StackValue) else value
-        return self.min <= v <= self.max
-
-    def __or__(self, other: Interval) -> Interval:
-        if self.is_bot():
-            return other
-        if other.is_bot():
-            return self
-        return wrap_or_top(min(self.min, other.min), max(self.max, other.max))
-
-    def __and__(self, other: Interval) -> Interval:
-        max_val = min(self.max, other.max)
-        min_val = max(self.min, other.min)
-        if max_val < min_val:
-            return Interval.bot()
-        return Interval(min_val, max_val)
-
-    def __lt__(self, other: Interval) -> bool:
-        if self == other:
-            return False
-        if self.is_bot():
-            return True
-        if other.is_bot():
-            return False
-        return other.min <= self.min and self.max <= other.max
-
-    def __gt__(self, other: Interval) -> bool:
-        if self == other:
-            return False
-        if self.is_bot():
-            return False
-        if other.is_bot():
-            return True
-        return self.min <= other.min and other.max <= self.max
-
-    def arithmetic(
-        self, other: Interval, opr: jvm.BinaryOpr
-    ) -> list[Interval | str]:
-        if self.is_bot() or other.is_bot():
-            return []
-
-        min1, max1 = self.min, self.max
-        min2, max2 = other.min, other.max
-
-        match opr:
-            case jvm.BinaryOpr.Add:
-                return [wrap_or_top(min1 + min2, max1 + max2)]
-
-            case jvm.BinaryOpr.Sub:
-                return [wrap_or_top(min1 - max2, max1 - min2)]
-
-            case jvm.BinaryOpr.Mul:
-                temp = [min1 * min2, min1 * max2, max1 * min2, max1 * max2]
-                return [wrap_or_top(min(temp), max(temp))]
-
-            case jvm.BinaryOpr.Div:
-                result: list[Interval | str] = []
-                if min2 <= 0 <= max2:
-                    result.append("divide by zero")
-
-                lo = Interval(min2, min(max2, -1))
-                hi = Interval(max(min2, 1), max2)
-
-                for part in (lo, hi):
-                    if not part.is_bot():
-                        res = []
-                        for x in (min1, max1):
-                            for y in (part.min, part.max):
-                                div = abs(x) // abs(y)
-                                div = div if (x >= 0) == (y >= 0) else -div
-                                res.append(div)
-                        result.append(wrap_or_top(min(res), max(res)))
-                return result
-
-            case jvm.BinaryOpr.Rem:
-                result = []
-                if min2 <= 0 <= max2:
-                    result.append("divide by zero")
-
-                if not (min2 == 0 == max2):
-                    m = max(abs(min2), abs(max2)) - 1
-                    bound = max(abs(min1), abs(max1))
-                    lo = max(-m if min1 < 0 else 0, -bound)
-                    hi = min(m if max1 > 0 else 0, bound)
-                    result.append(wrap_or_top(lo, hi))
-                return result
-
-            case _:
-                return [Interval.top()]
-
-    def bitwise(self, other: Interval, opr: jvm.BitOpr) -> Interval:
-        if self.is_bot() or other.is_bot():
-            return Interval.bot()
-
-        min1, max1 = self.min, self.max
-        min2, max2 = other.min, other.max
-
-        match opr:
-            case jvm.BitOpr.And:
-                if min1 >= 0 and min2 >= 0:
-                    return Interval(0, min(max1, max2))
-                if other.single and min2 >= 0:
-                    return Interval(0, min2)
-                if self.single and min1 >= 0:
-                    return Interval(0, min1)
-                return Interval.top()
-
-            case jvm.BitOpr.Or:
-                if min1 >= 0 and min2 >= 0:
-                    max_val = max(max1, max2)
-                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
-                    return Interval(max(min1, min2), min(INT_MAX, upper))
-                return Interval.top()
-
-            case jvm.BitOpr.Xor:
-                if self.single and other.single:
-                    val = min1 ^ min2
-                    val = ((val + (1 << 31)) % (1 << 32)) - (1 << 31)
-                    return Interval(val, val)
-                if min1 >= 0 and min2 >= 0:
-                    max_val = max(max1, max2)
-                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
-                    return Interval(0, min(INT_MAX, upper))
-                return Interval.top()
-
-            case jvm.BitOpr.Shl:
-                if other.single:
-                    s = min2 & 0x1F
-                    if s == 0:
-                        return self
-                    return wrap_or_top(min1 << s, max1 << s)
-                return Interval.top()
-
-            case jvm.BitOpr.Shr:
-                if other.single:
-                    s = min2 & 0x1F
-                    return Interval(min1 >> s, max1 >> s)
-                return Interval.top()
-
-            case jvm.BitOpr.Ushr:
-                if other.single:
-                    s = min2 & 0x1F
-                    if s == 0:
-                        return self
-                    if min1 >= 0:
-                        return Interval(min1 >> s, max1 >> s)
-                    return Interval(0, INT_MAX >> (s - 1))
-                return Interval.nonneg() if min1 >= 0 else Interval.top()
-
-            case _:
-                return Interval.top()
-
-    def compare(self, other: Interval, opr: jvm.CmpOpr) -> Iterable[bool]:
-        result: set[bool] = set()
-        if self.is_bot() or other.is_bot():
-            return result
-        min1, max1 = self.min, self.max
-        min2, max2 = other.min, other.max
-
-        match opr:
-            case jvm.CmpOpr.Le:
-                can_true = min1 <= max2
-                can_false = max1 > min2
-            case jvm.CmpOpr.Lt:
-                can_true = min1 < max2
-                can_false = max1 >= min2
-            case jvm.CmpOpr.Ge:
-                can_true = max1 >= min2
-                can_false = min1 < max2
-            case jvm.CmpOpr.Gt:
-                can_true = max1 > min2
-                can_false = min1 <= max2
-            case jvm.CmpOpr.Eq:
-                can_true = not (self & other).is_bot()
-                can_false = not (min1 == min2 == max1 == max2)
-            case jvm.CmpOpr.Ne:
-                can_true = not (min1 == min2 == max1 == max2)
-                can_false = not (self & other).is_bot()
-            case _:
-                raise NotImplementedError(f"{opr!r}")
-
-        if can_true:
-            result.add(True)
-        if can_false:
-            result.add(False)
-        return result
-
-    def refine(
-        self, other: Interval, opr: jvm.CmpOpr, outcome: bool
-    ) -> tuple[Interval, Interval]:
-        if self.is_bot() or other.is_bot():
-            return Interval.bot(), Interval.bot()
-
-        min1, max1 = self.min, self.max
-        min2, max2 = other.min, other.max
-
-        if not outcome:
-            opr = NEGATED[opr]
-
-        match opr:
-            case jvm.CmpOpr.Le:
-                na = self & Interval(INT_MIN, max2)
-                nb = other & Interval(min1, INT_MAX)
-            case jvm.CmpOpr.Lt:
-                na = self & Interval(INT_MIN, max2 - 1)
-                nb = other & Interval(min1 + 1, INT_MAX)
-            case jvm.CmpOpr.Ge:
-                na = self & Interval(min2, INT_MAX)
-                nb = other & Interval(INT_MIN, max1)
-            case jvm.CmpOpr.Gt:
-                na = self & Interval(min2 + 1, INT_MAX)
-                nb = other & Interval(INT_MIN, max1 - 1)
-            case jvm.CmpOpr.Eq:
-                na = self & other
-                nb = self & other
-            case jvm.CmpOpr.Ne:
-                na, nb = self, other
-                if other.single:
-                    if min1 == min2:
-                        na = Interval(min1 + 1, max1)
-                    elif max1 == min2:
-                        na = Interval(min1, max1 - 1)
-                if self.single:
-                    if min2 == min1:
-                        nb = Interval(min2 + 1, max2)
-                    elif max2 == min1:
-                        nb = Interval(min2, max2 - 1)
-            case _:
-                raise NotImplementedError(f"{opr!r}")
-
-        return na, nb
-
-    def widen(
-        self, other: Interval, K: set[int] | frozenset[int] | list[int]
-    ) -> Interval:
-        if self.is_bot():
-            return other
-        if other.is_bot():
-            return self
-
-        min1, max1 = self.min, self.max
-        min2, max2 = other.min, other.max
-
-        if max2 > max1:
-            new_max = min((k for k in K if k >= max2), default=INT_MAX)
-        else:
-            new_max = max1
-
-        if min2 < min1:
-            new_min = max((k for k in K if k <= min2), default=INT_MIN)
-        else:
-            new_min = min1
-
-        return Interval(new_min, new_max)
-
-    def narrow(self, other: Interval) -> Interval:
-        if self.is_bot() or other.is_bot():
-            return Interval.bot()
-        lo = other.min if self.min == INT_MIN else self.min
-        hi = other.max if self.max == INT_MAX else self.max
-        return Interval(lo, hi)
-
-    def split(self, points: Iterable[int]) -> list[Interval]:
-        if self.is_bot():
-            return []
-        cursor = self.min
-        interval_list: list[Interval] = []
-        for k in sorted(set(points)):
-            if k < self.min:
-                continue
-            if k > self.max:
-                break
-            if cursor < k:
-                interval_list.append(Interval(cursor, k - 1))
-            interval_list.append(Interval(k, k))
-            cursor = k + 1
-
-        if cursor <= self.max:
-            interval_list.append(Interval(cursor, self.max))
-
-        return interval_list
 
 
 # A cast wraps a value that does not fit, like (short) 40000 == -25536. Only an
@@ -456,19 +109,16 @@ Pieces = IntervalSet
 
 
 def pieces_from_interval(iv: Interval) -> Pieces:
-    return Pieces.make([absIntervals.Interval(iv.min, iv.max)])
+    return Pieces.make([iv])
 
 
 # A value is in both the interval and the pieces, so each one limits the other.
 def reduce_pair(iv: Interval, out: Pieces) -> tuple[Interval, Pieces]:
-    out = Pieces.make(
-        absIntervals.Interval(max(iv.min, p.min), min(iv.max, p.max))
-        for p in out.pieces()
-    )
+    out = Pieces.make(iv & piece for piece in out.pieces())
     pieces = out.pieces()
     if not pieces:
         return Interval.bot(), out
-    return Interval(min(p.min for p in pieces), max(p.max for p in pieces)), out
+    return Interval(min(piece.min for piece in pieces), max(piece.max for piece in pieces)), out
 
 
 # The errors and the value of a op b on the pieces. The value is None when the
@@ -477,8 +127,9 @@ def pieces_arithmetic(
     a: Pieces, b: Pieces, op: jvm.BinaryOpr
 ) -> tuple[set[str], Pieces | None]:
     results = a.arithmetic(b, op)
-    values = [r for r in results if not isinstance(r, str)]
-    return {r for r in results if isinstance(r, str)}, next(iter(values), None)
+    errors = {result for result in results if isinstance(result, str)}
+    values = [result for result in results if not isinstance(result, str)]
+    return errors, next(iter(values), None)
 
 
 # -INT_MIN does not fit, and Java gives INT_MIN back.
@@ -491,8 +142,7 @@ def negate_interval(iv: Interval) -> Interval:
 # Each piece goes through the same function as the interval. Trying only some values
 # of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
 def map_pieces(out: Pieces, fn) -> Pieces:
-    pieces = (fn(Interval(piece.min, piece.max)) for piece in out.pieces())
-    return Pieces.make(absIntervals.Interval(p.min, p.max) for p in pieces)
+    return Pieces.make(fn(piece) for piece in out.pieces())
 
 
 @dataclass(frozen=True)
@@ -640,16 +290,16 @@ class State(sexpr.AsSExpr):
     def forget_elements(self, refs: Iterable[Val]) -> State:
         # A called method can write into the arrays it gets. After the call their
         # elements can be anything.
-        arrays = [r for r in refs if r.is_ref]
+        arrays = [ref for ref in refs if ref.is_ref]
 
         def forget(x: Val) -> Val:
             return replace(x, elem_iv=Interval.top())
 
         def passed(x: Val, index: int | None = None) -> bool:
             return any(
-                (r.src is not None and r.src in (x.src, index))
-                or (r.alloc_id is not None and r.alloc_id == x.alloc_id)
-                for r in arrays
+                (array.src is not None and array.src in (x.src, index))
+                or (array.alloc_id is not None and array.alloc_id == x.alloc_id)
+                for array in arrays
             )
 
         return State(
@@ -987,11 +637,11 @@ class UnboundedIntervalAnalysis:
                     case jvm.Reference() | jvm.Array():
                         va = Val(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
                     case jvm.Object(classname) if classname.dotted() == "java.lang.String":
-                        s = str(v)
-                        ords = [ord(c) for c in s]
+                        text = str(v)
+                        ords = [ord(char) for char in text]
                         e_iv = Interval(min(ords), max(ords)) if ords else Interval.bot()
                         va = Val(
-                            Interval.const(len(s)),
+                            Interval.const(len(text)),
                             may_null=False,
                             may_nonnull=True,
                             elem_iv=e_iv,
@@ -1019,9 +669,9 @@ class UnboundedIntervalAnalysis:
                     v.out, pieces_from_interval(Interval.const(a)), jvm.BinaryOpr.Add
                 )
                 keep_bound = v.bounded_by if a <= 0 else None
-                for r in v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add):
-                    if isinstance(r, Interval):
-                        new = Val(r, bounded_by=keep_bound, out=inc_out)
+                for result in v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add):
+                    if isinstance(result, Interval):
+                        new = Val(result, bounded_by=keep_bound, out=inc_out)
                         if not new.iv.is_bot():
                             out.append((pc + 1, state.store(i, new)))
 
@@ -1063,8 +713,13 @@ class UnboundedIntervalAnalysis:
                 results = a.iv.arithmetic(b.iv, op)
                 out_errors, value_out = pieces_arithmetic(a.out, b.out, op)
                 # An error needs both the interval and the pieces to allow it.
-                out.extend(sorted({r for r in results if isinstance(r, str)} & out_errors))
-                values = [r for r in results if isinstance(r, Interval) and not r.is_bot()]
+                errors = {result for result in results if isinstance(result, str)}
+                out.extend(sorted(errors & out_errors))
+                values = [
+                    result
+                    for result in results
+                    if isinstance(result, Interval) and not result.is_bot()
+                ]
                 if values:
                     value = Val(functools.reduce(operator.or_, values), out=value_out)
                     if not value.iv.is_bot():
@@ -1429,7 +1084,7 @@ class UnboundedIntervalAnalysis:
                     continue
                 # With the points 0 and 300 the fuzzer records 7 as the range [1, 299].
                 for piece in val.out.pieces():
-                    for sub_iv in Interval(piece.min, piece.max).split(pts):
+                    for sub_iv in piece.split(pts):
                         tuples.add((pc, position, *range_of(sub_iv.min, pts)))
 
         return frozenset(tuples)
@@ -1541,9 +1196,9 @@ def analyse():
         final = analysis.outcomes
         diverge = analysis.may_diverge()
         incomplete = False
-    except Exception as e:  # ruff: ignore[BLE001]
+    except Exception as error:  # ruff: ignore[BLE001]
         traceback.print_exc()
-        print(f"analysis failed: {e!r}", file=sys.stderr)
+        print(f"analysis failed: {error!r}", file=sys.stderr)
         final = set()
         diverge = True
         incomplete = True

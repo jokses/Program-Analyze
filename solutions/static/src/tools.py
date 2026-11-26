@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import Self
 
-import jvm
 import jvm.state as jvms
 
 

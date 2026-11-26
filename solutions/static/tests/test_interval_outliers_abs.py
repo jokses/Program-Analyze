@@ -16,7 +16,7 @@ import traceback
 import jvm
 from jvm.state import StackInt as SV
 
-from absIntervals import INT_MAX, INT_MIN, Interval
+from absIntervals import Interval
 import absOutliers as mod
 from absOutliers import IntervalOutliers as IO
 

@@ -84,9 +84,11 @@ def fuzz(
     corpus = dynamic.Corpus(params, rand)
     constants = sorted(dynamic.ints_in_method(method))
     constants += dynamic.strings_in_method(method)
-    first_codes = [b""] + [dynamic.constant_code(params, c) for c in constants]
+    first_codes = [b""] + [
+        dynamic.constant_code(params, constant) for constant in constants
+    ]
     reached = methods_reached(bc, methodid)
-    all_instructions = sum(len(bc.getmethod(m).opcodes) for m in reached)
+    all_instructions = sum(len(bc.getmethod(method).opcodes) for method in reached)
 
     instructions = set()
     ranges = set()
@@ -155,7 +157,7 @@ def fuzz(
             instructions=tuple(sorted(pc.encode() for pc in instructions)),
             ranges=encode(ranges),
             kept_inputs=tuple(
-                corpus.fuzz_input(c).encode() for c in corpus.interesting
+                corpus.fuzz_input(code).encode() for code in corpus.interesting
             ),
             bound_size=None if bound is None else len(bound),
             bound_not_covered=None if bound is None else len(bound - ranges),
@@ -214,8 +216,8 @@ def main(bound_of=None):
                 start = time.process_time()
                 try:
                     bound = frozenset(bound_of(bc, methodid, args.split))
-                except Exception as e:  # ruff: ignore[BLE001]
-                    analysis_error = e
+                except Exception as error:  # ruff: ignore[BLE001]
+                    analysis_error = error
                 analysis_seconds = round(time.process_time() - start, 3)
             for version in args.versions.split(","):
                 for seed in range(args.seeds):
@@ -233,10 +235,10 @@ def main(bound_of=None):
                                 bound=bound,
                             )
                             result = replace(result, analysis_seconds=analysis_seconds)
-                        except Exception as e:  # ruff: ignore[BLE001]
+                        except Exception as crash:  # ruff: ignore[BLE001]
                             # The interpreter and fuzz_input raise on what they do not
                             # support.
-                            error = e
+                            error = crash
                     if error is not None:
                         result = Result(
                             methodid.encode(),

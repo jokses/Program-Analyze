@@ -32,8 +32,20 @@ class Interval(Abstraction, Lattice):
     def bot(cls):
         return cls(1, 0)
 
+    @classmethod
+    def nonneg(cls) -> Self:
+        return cls(0, INT_MAX)
+
+    @classmethod
+    def const(cls, c: int) -> Self:
+        return cls(c, c)
+
     def is_bot(self) -> bool:
         return self.min > self.max
+
+    @property
+    def single(self) -> bool:
+        return self.min == self.max
 
     def __str__(self):
         return "⊥" if self.is_bot() else f"[{self.min}, {self.max}]"
@@ -50,9 +62,10 @@ class Interval(Abstraction, Lattice):
             return cls(1, 0)
         return cls(min(nums), max(nums))
 
-    def __contains__(self, value: jvms.StackValue) -> bool:
+    def __contains__(self, value: jvms.StackValue | int) -> bool:
         # Checks if the value is in the interval
-        return self.min <= value.value <= self.max
+        v = value.value if isinstance(value, jvms.StackValue) else value
+        return self.min <= v <= self.max
 
     @classmethod
     def top(cls) -> Self:
@@ -148,8 +161,9 @@ class Interval(Abstraction, Lattice):
 
                 if not (min2 == 0 == max2):
                     m = max(abs(min2), abs(max2)) - 1
-                    lo = -m if min1 < 0 else 0
-                    hi = m if max1 > 0 else 0
+                    bound = max(abs(min1), abs(max1))
+                    lo = max(-m if min1 < 0 else 0, -bound)
+                    hi = min(m if max1 > 0 else 0, bound)
                     result.append(wrap_or_top(lo, hi))
 
                 return result
@@ -157,6 +171,68 @@ class Interval(Abstraction, Lattice):
             case _:
                 # print("look here", opr, file=sys.stderr)
                 raise NotImplementedError(f"TODO: {opr}")
+
+    def bitwise(self, other: "Interval", opr: jvm.BitOpr) -> "Interval":
+        if self.is_bot() or other.is_bot():
+            return Interval.bot()
+
+        min1, max1 = self.min, self.max
+        min2, max2 = other.min, other.max
+
+        match opr:
+            case jvm.BitOpr.And:
+                if min1 >= 0 and min2 >= 0:
+                    return Interval(0, min(max1, max2))
+                if other.single and min2 >= 0:
+                    return Interval(0, min2)
+                if self.single and min1 >= 0:
+                    return Interval(0, min1)
+                return Interval.top()
+
+            case jvm.BitOpr.Or:
+                if min1 >= 0 and min2 >= 0:
+                    max_val = max(max1, max2)
+                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
+                    return Interval(max(min1, min2), min(INT_MAX, upper))
+                return Interval.top()
+
+            case jvm.BitOpr.Xor:
+                if self.single and other.single:
+                    val = min1 ^ min2
+                    val = ((val + (1 << 31)) % (1 << 32)) - (1 << 31)
+                    return Interval(val, val)
+                if min1 >= 0 and min2 >= 0:
+                    max_val = max(max1, max2)
+                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
+                    return Interval(0, min(INT_MAX, upper))
+                return Interval.top()
+
+            case jvm.BitOpr.Shl:
+                if other.single:
+                    s = min2 & 0x1F
+                    if s == 0:
+                        return self
+                    return wrap_or_top(min1 << s, max1 << s)
+                return Interval.top()
+
+            case jvm.BitOpr.Shr:
+                if other.single:
+                    s = min2 & 0x1F
+                    return Interval(min1 >> s, max1 >> s)
+                return Interval.top()
+
+            case jvm.BitOpr.Ushr:
+                if other.single:
+                    s = min2 & 0x1F
+                    if s == 0:
+                        return self
+                    if min1 >= 0:
+                        return Interval(min1 >> s, max1 >> s)
+                    return Interval(0, INT_MAX >> (s - 1))
+                return Interval.nonneg() if min1 >= 0 else Interval.top()
+
+            case _:
+                return Interval.top()
 
     def compare(self, other: "Interval", opr: jvm.CmpOpr) -> Iterable[bool]:
         result = set()
@@ -285,6 +361,13 @@ class Interval(Abstraction, Lattice):
             new_min = min1
 
         return Interval(new_min, new_max)
+
+    def narrow(self, other: "Interval") -> "Interval":
+        if self.is_bot() or other.is_bot():
+            return Interval.bot()
+        lo = other.min if self.min == INT_MIN else self.min
+        hi = other.max if self.max == INT_MAX else self.max
+        return Interval(lo, hi)
 
     def split(self, K: set) -> list:
         lo = self.min

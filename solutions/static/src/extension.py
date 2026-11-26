@@ -179,9 +179,14 @@ def main():
                     new_rows += extend(
                         bc, methodid, oracle, seed, args.split, int_params
                     )
-            except Exception as e:  # ruff: ignore[BLE001]
+            # A crash in one method becomes an error row and the next method runs.
+            except Exception as error:  # ruff: ignore[BLE001]
                 new_rows = [
-                    {"method": methodid.encode(), "split": args.split, "error": repr(e)}
+                    {
+                        "method": methodid.encode(),
+                        "split": args.split,
+                        "error": repr(error),
+                    }
                 ]
             for row in new_rows:
                 out.write(json.dumps(row) + "\n")
