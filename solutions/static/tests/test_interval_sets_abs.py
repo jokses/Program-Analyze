@@ -10,7 +10,7 @@ def of(*pieces):
 
 
 def bounds(value):
-    return [(piece.min, piece.max) for piece in value.pieces()]
+    return [(piece.min, piece.max) for piece in value.pieces]
 
 
 # A value that differs from a point leaves the point out of its middle.
@@ -26,7 +26,7 @@ def test_refine_leaves_out_the_point_a_value_differs_from(opr, outcome):
 def test_division_by_pieces_on_both_sides_of_zero_keeps_every_result():
     [value] = of((1, 1)).arithmetic(of((-2, -1), (1, 2)), jvm.BinaryOpr.Div)
     assert all(
-        any(piece.min <= x <= piece.max for piece in value.pieces()) for x in (-1, 0, 1)
+        any(piece.min <= x <= piece.max for piece in value.pieces) for x in (-1, 0, 1)
     )
 
 

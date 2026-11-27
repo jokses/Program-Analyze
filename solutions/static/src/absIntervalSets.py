@@ -20,7 +20,7 @@ import jvm.state as jvms
 # Source: https://hal.sorbonne-universite.fr/hal-04317611v1
 @dataclass(frozen=True)
 class IntervalSet(Abstraction, Lattice):
-    intervals: tuple[Interval, ...] = ()
+    pieces: tuple[Interval, ...] = ()
 
     # Overlapping and touching pieces are merged so equal sets look the same.
     @classmethod
@@ -36,9 +36,6 @@ class IntervalSet(Abstraction, Lattice):
                 merged.append(piece)
         return cls(tuple(merged))
 
-    def pieces(self) -> list[Interval]:
-        return list(self.intervals)
-
     @classmethod
     def bot(cls) -> Self:
         return cls()
@@ -52,27 +49,25 @@ class IntervalSet(Abstraction, Lattice):
         return cls.make(Interval(value.value, value.value) for value in values)
 
     def __contains__(self, value: jvms.StackValue) -> bool:
-        return any(value in piece for piece in self.intervals)
+        return any(value in piece for piece in self.pieces)
 
     def is_bot(self) -> bool:
-        return not self.intervals
+        return not self.pieces
 
     def __or__(self, other: Self) -> Self:
-        return self.make(self.pieces() + other.pieces())
+        return self.make(self.pieces + other.pieces)
 
     def __and__(self, other: Self) -> Self:
-        return self.make(
-            left & right for left in self.intervals for right in other.intervals
-        )
+        return self.make(left & right for left in self.pieces for right in other.pieces)
 
     # The pieces are merged so each piece of self has to lie in one piece of other.
     def __le__(self, other: Self) -> bool:
         return all(
             any(
                 right.min <= left.min and left.max <= right.max
-                for right in other.intervals
+                for right in other.pieces
             )
-            for left in self.intervals
+            for left in self.pieces
         )
 
     def __lt__(self, other: Self) -> bool:
@@ -82,15 +77,15 @@ class IntervalSet(Abstraction, Lattice):
         return other < self
 
     def __str__(self) -> str:
-        return " | ".join(map(str, self.intervals)) or "bot"
+        return " | ".join(map(str, self.pieces)) or "bot"
 
     def arithmetic(self, other: Self, opr: jvm.BinaryOpr) -> list[Self | str]:
         if self.is_bot() or other.is_bot():
             return [self.bot()]
         errors: list[str] = []
         values: list[Interval] = []
-        for left in self.intervals:
-            for right in other.intervals:
+        for left in self.pieces:
+            for right in other.pieces:
                 for result in left.arithmetic(right, opr):
                     if isinstance(result, str):
                         if result not in errors:
@@ -102,8 +97,8 @@ class IntervalSet(Abstraction, Lattice):
     def compare(self, other: Self, opr: jvm.CmpOpr) -> set[bool]:
         return {
             outcome
-            for left in self.intervals
-            for right in other.intervals
+            for left in self.pieces
+            for right in other.pieces
             for outcome in left.compare(right, opr)
         }
 
@@ -113,8 +108,8 @@ class IntervalSet(Abstraction, Lattice):
         differs = (opr, outcome) in {(jvm.CmpOpr.Ne, True), (jvm.CmpOpr.Eq, False)}
         self_kept: list[Interval] = []
         other_kept: list[Interval] = []
-        for left in self.intervals:
-            for right in other.intervals:
+        for left in self.pieces:
+            for right in other.pieces:
                 if outcome not in left.compare(right, opr):
                     continue
                 left_kept, right_kept = left.refine(right, opr, outcome)
@@ -155,7 +150,7 @@ def by_range(
     value: IntervalSet, constants: list[int]
 ) -> dict[tuple[int, int], Interval]:
     ranges: dict[tuple[int, int], Interval] = {}
-    for piece in value.intervals:
+    for piece in value.pieces:
         for sub in piece.split(constants):
             bounds = range_around(sub.min, constants)
             ranges[bounds] = ranges.get(bounds, Interval.bot()) | sub

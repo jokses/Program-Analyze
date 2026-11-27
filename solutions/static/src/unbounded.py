@@ -15,6 +15,7 @@ from pathlib import Path
 from absIntervals import INT_MAX, INT_MIN, Interval, wrap_or_top
 from absIntervalSets import IntervalSet
 from absOutliers import IntervalOutliers
+from absSigns import SignSet
 from dynamic import comparisons_in_method, operands, range_of, split_points
 from syntactic_constants import MethodConstants
 
@@ -105,9 +106,10 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
 
 
 # Next to its interval each value has pieces. A range between two pieces, like 0
-# when n != 0, is not in the bound. --domain picks the pieces once for the whole run,
-# and IntervalOutliers is the comparison that cannot leave out a point inside.
-DOMAINS = {"sets": IntervalSet, "outliers": IntervalOutliers}
+# when n != 0, is not in the bound. --domain picks the pieces once for the whole run.
+# IntervalOutliers cannot leave out a point inside an interval, and SignSet keeps
+# only the signs, as the course's sign analysis does next to its intervals.
+DOMAINS = {"sets": IntervalSet, "outliers": IntervalOutliers, "signs": SignSet}
 Pieces = IntervalSet
 
 
@@ -117,11 +119,13 @@ def pieces_from_interval(iv: Interval) -> Pieces:
 
 # A value is in both the interval and the pieces, so each one limits the other.
 def reduce_pair(iv: Interval, out: Pieces) -> tuple[Interval, Pieces]:
-    out = type(out).make(iv & piece for piece in out.pieces())
-    pieces = out.pieces()
+    out = type(out).make(iv & piece for piece in out.pieces)
+    pieces = out.pieces
     if not pieces:
         return Interval.bot(), out
-    return Interval(min(piece.min for piece in pieces), max(piece.max for piece in pieces)), out
+    low = min(piece.min for piece in pieces)
+    high = max(piece.max for piece in pieces)
+    return Interval(low, high) & iv, out
 
 
 # The errors and the value of a op b on the pieces. The value is None when the
@@ -145,7 +149,7 @@ def negate_interval(iv: Interval) -> Interval:
 # Each piece goes through the same function as the interval. Trying only some values
 # of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
 def map_pieces(out: Pieces, fn) -> Pieces:
-    return type(out).make(fn(piece) for piece in out.pieces())
+    return type(out).make(fn(piece) for piece in out.pieces)
 
 
 @dataclass(frozen=True)
@@ -1093,8 +1097,9 @@ class UnboundedIntervalAnalysis:
                 if val.is_ref or (val.may_null and not val.may_nonnull) or val.iv.is_bot():
                     continue
                 # With the points 0 and 300 the fuzzer records 7 as the range [1, 299].
-                for piece in val.out.pieces():
-                    for sub_iv in piece.split(pts):
+                # A sign stands for all ints of that sign so it is cut to the interval.
+                for piece in val.out.pieces:
+                    for sub_iv in (piece & val.iv).split(pts):
                         tuples.add((pc, position, *range_of(sub_iv.min, pts)))
 
         return frozenset(tuples)

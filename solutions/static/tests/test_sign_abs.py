@@ -119,7 +119,16 @@ def compare(opr, x, y):
 
 
 @given(
-    st.sampled_from(jvm.CmpOpr),
+    st.sampled_from(
+        [
+            jvm.CmpOpr.Eq,
+            jvm.CmpOpr.Ne,
+            jvm.CmpOpr.Lt,
+            jvm.CmpOpr.Le,
+            jvm.CmpOpr.Gt,
+            jvm.CmpOpr.Ge,
+        ]
+    ),
     st.sets(st_stack_ints()),
     st.sets(
         st_stack_ints(),

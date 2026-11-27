@@ -2,12 +2,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, Self
 
+from absIntervals import INT_MAX, INT_MIN, Interval
 from tools import Abstraction, Lattice
 
 import jvm
 import jvm.state as jvms
 
 type Sign = Literal[-1, 0, 1]
+
+# The ints each sign stands for.
+SIGN_INTERVALS = {-1: Interval(INT_MIN, -1), 0: Interval(0, 0), 1: Interval(1, INT_MAX)}
 
 
 def to_sign(value: jvms.StackValue) -> Sign:
@@ -52,6 +56,39 @@ class SignSet(Abstraction, Lattice):
     def top(cls) -> Self:
         return cls(frozenset([-1, 0, 1]))
 
+    # The analysis keeps signs next to its intervals as pieces, one interval per sign.
+    @classmethod
+    def make(cls, pieces: Iterable[Interval]) -> Self:
+        return cls(
+            frozenset(
+                sign
+                for piece in pieces
+                for sign, ints in SIGN_INTERVALS.items()
+                if not (piece & ints).is_bot()
+            )
+        )
+
+    @property
+    def pieces(self) -> list[Interval]:
+        return [SIGN_INTERVALS[sign] for sign in sorted(self.signs)]
+
+    def refine(
+        self, other: "SignSet", opr: jvm.CmpOpr, outcome: bool
+    ) -> tuple["SignSet", "SignSet"]:
+        self_kept: list[Interval] = []
+        other_kept: list[Interval] = []
+        for left in self.pieces:
+            for right in other.pieces:
+                if outcome in left.compare(right, opr):
+                    left_kept, right_kept = left.refine(right, opr, outcome)
+                    self_kept.append(left_kept)
+                    other_kept.append(right_kept)
+        return self.make(self_kept), self.make(other_kept)
+
+    # There are only eight sign sets, so joining stops by itself.
+    def widen(self, other: "SignSet", K: set) -> "SignSet":
+        return self | other
+
     def __or__(self, other: "SignSet") -> "SignSet":
         if not isinstance(other, SignSet):
             return NotImplemented
@@ -79,7 +116,8 @@ class SignSet(Abstraction, Lattice):
 
                 if -1 in self.signs:
                     output.add(-1)
-                    if 1 in other.signs:
+                    # Two negatives can wrap too, like -1 + INT_MIN == INT_MAX.
+                    if 1 in other.signs or -1 in other.signs:
                         output.update([0, 1])
 
                 if 0 in self.signs:

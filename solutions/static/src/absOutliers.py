@@ -71,6 +71,7 @@ class IntervalOutliers(Abstraction, Lattice):
 
         return cls(iv_merged, frozenset(outliersFound))
 
+    @property
     def pieces(self) -> list[Interval]:
         out = [] if self.iv.is_bot() else [self.iv]
         return out + [Interval(p, p) for p in sorted(self.outliers)]
@@ -93,11 +94,11 @@ class IntervalOutliers(Abstraction, Lattice):
         return self.iv.min <= v and v <= self.iv.max or v in self.outliers
 
     def __or__(self, other: "IntervalOutliers") -> "IntervalOutliers":
-        return IntervalOutliers.make(self.pieces() + other.pieces())
+        return IntervalOutliers.make(self.pieces + other.pieces)
 
     def __and__(self, other: "IntervalOutliers") -> "IntervalOutliers":
         return IntervalOutliers.make(
-            a & b for a in self.pieces() for b in other.pieces()
+            a & b for a in self.pieces for b in other.pieces
         )
 
     def hasValue(self, x: int) -> bool:
@@ -161,8 +162,8 @@ class IntervalOutliers(Abstraction, Lattice):
 
         results: list[Interval] = []
         errors: list[str] = []
-        for a in self.pieces():
-            for b in other.pieces():
+        for a in self.pieces:
+            for b in other.pieces:
                 for r in a.arithmetic(b, opr):
                     if isinstance(r, str):
                         if r not in errors:
@@ -178,8 +179,8 @@ class IntervalOutliers(Abstraction, Lattice):
     # Uses the methods defined in the Interval class
     def compare(self, other: "IntervalOutliers", opr: jvm.CmpOpr) -> Iterable[bool]:
         result: set[bool] = set()
-        for a in self.pieces():
-            for b in other.pieces():
+        for a in self.pieces:
+            for b in other.pieces:
                 result |= set(a.compare(b, opr))
         return result
 
@@ -189,8 +190,8 @@ class IntervalOutliers(Abstraction, Lattice):
     ) -> tuple["IntervalOutliers", "IntervalOutliers"]:
         na: list[Interval] = []
         nb: list[Interval] = []
-        for a in self.pieces():
-            for b in other.pieces():
+        for a in self.pieces:
+            for b in other.pieces:
                 if outcome in a.compare(b, opr):
                     ra, rb = a.refine(b, opr, outcome)
                     na.append(ra)

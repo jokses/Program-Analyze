@@ -589,7 +589,7 @@ def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Inp
 
             case a:
                 raise NotImplementedError(
-                    "Don't know how to create random values for {input}"
+                    f"Don't know how to create random values for {p}"
                 )
 
     return jpamb.case.Input(input)

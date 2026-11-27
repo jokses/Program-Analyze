@@ -41,14 +41,14 @@ def test_call_forgets_the_elements_of_a_passed_array():
     assert state.forget_elements([passed]).locals[0].elem_iv == Interval.top()
 
 
-# n != 0 is checked before 1 / n so n (operand 1) is never 0 at the division. Only
-# the interval sets can leave out a point inside an interval.
+# n != 0 is checked before 1 / n so n (operand 1) is never 0 at the division.
+# The interval sets and the signs can leave out 0 inside an interval and the
+# outliers cannot.
 @pytest.mark.parametrize(
-    ("domain", "zero_in_bound"), [("sets", False), ("outliers", True)]
+    ("domain", "zero_in_bound"),
+    [("sets", False), ("signs", False), ("outliers", True)],
 )
-def test_only_interval_sets_leave_out_zero_at_the_division_after_n_not_zero(
-    domain, zero_in_bound
-):
+def test_leaving_out_zero_at_the_division_after_n_not_zero(domain, zero_in_bound):
     suite = jpamb.Suite.from_workdir(REPO)
     bc = jpamb.Bytecode(suite, jpamb.Effect(None), {})
     methodid = jvm.AbsMethodID.decode("jpamb.cases.Simple.checkBeforeDivideByN2:(I)I")
@@ -90,4 +90,4 @@ def to_char(iv):
 )
 def test_pieces_keep_the_value_java_gives(operation, low, high, java):
     out = map_pieces(pieces_from_interval(Interval(low, high)), operation)
-    assert any(piece.min <= java <= piece.max for piece in out.pieces())
+    assert any(piece.min <= java <= piece.max for piece in out.pieces)
