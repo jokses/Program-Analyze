@@ -61,12 +61,16 @@ def main():
         if row["stop_reason"] == "crash":
             crashes[(row["method"], row["error"])] += 1
         else:
-            groups[(row["method"], row["split"], row["version"])].append(row)
+            # fuzzer writes an empty domain and no bound, so its rows stay apart from
+            # the rows of fuzzer-with-bound.
+            domain = row["domain"] or "-"
+            key = (row["method"], row["split"], domain, row["version"])
+            groups[key].append(row)
     for (method, error), count in sorted(crashes.items()):
         print("crash", method, count, "rows", error)
 
-    print("method split version seeds runs seconds stops missed bound outside")
-    for (method, split, version), runs in sorted(groups.items()):
+    print("method split domain version seeds runs seconds stops missed bound outside")
+    for (method, split, domain, version), runs in sorted(groups.items()):
         stops = defaultdict(int)
         missed = defaultdict(int)
         for row in runs:
@@ -87,6 +91,7 @@ def main():
         print(
             method,
             split,
+            domain,
             version,
             len(runs),
             statistics.median(row["runs"] for row in runs),

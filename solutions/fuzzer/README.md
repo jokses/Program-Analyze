@@ -31,7 +31,7 @@ fuzzer-checks all.jsonl
 
 `fuzzer` writes one JSON line for each method, version and seed. A line has the number of runs, the CPU time, why the version stopped, the outcomes, the instructions and ranges it covered and the inputs it kept.
 
-`fuzzer-checks` prints one line for each method, split and version, over all its seeds:
+`fuzzer-checks` prints one line for each method, split, domain and version, over all its seeds. Rows of `fuzzer` have no domain and show `-`:
 
 - the number of seeds, the median number of runs and the median CPU seconds, with the analysis for `range` under `fuzzer-with-bound`
 - how many seeds stopped for each reason
@@ -57,15 +57,11 @@ jpamb interpret fuzzer-interpreter
 ```bash
 mkdir -p build/jvm/classes
 javac -d build/jvm/classes $(find cases solutions/bytecode -name '*.java')
-printf 'Premain-Class: jpamb.InstrumentationAgent\n' > build/jvm/manifest.txt
-(cd build/jvm/classes && jar cfm ../agent.jar ../manifest.txt jpamb/InstrumentationAgent*.class)
+printf 'Premain-Class: solutions.bytecode.InstrumentationAgent\n' > build/jvm/manifest.txt
+(cd build/jvm/classes && jar cfm ../agent.jar ../manifest.txt solutions/bytecode/InstrumentationAgent*.class)
 ```
 
-`jvm_agent.py` runs one input on the JVM with the agent. `jvm-analysis` is a JPAMB analysis that fuzzes a method on the JVM:
-
-```bash
-jpamb analyse jvm-analysis
-```
+`jvm_agent.py` runs one input on the JVM with the agent and reads the values the agent writes to a file when the JVM exits. `fuzzer-jvm-check` in `solutions/static` uses it.
 
 ## Notes
 

@@ -1,18 +1,22 @@
 import pytest
-from jvm_check import covers
+from absIntervals import INT_MAX, INT_MIN
+from jvm_check import in_bound
 
-# The divisor ranges of checkBeforeDivideByN2, where n != 0 leaves out 0.
-NOT_ZERO = [(-2147483648, -1), (1, 9), (10, 10), (11, 2147483647)]
+import jvm
+from jvm.state import PC
+
+DIVIDE = PC(jvm.AbsMethodID.decode("jpamb.cases.Simple.checkBeforeDivideByN2:(I)I"), 4)
+# n != 0 leaves out 0 from the divisor ranges, and operand 0 is not the divisor.
+BOUND = {
+    (DIVIDE, 1, INT_MIN, -1),
+    (DIVIDE, 1, 1, INT_MAX),
+    (DIVIDE, 0, 0, 0),
+}
 
 
 @pytest.mark.parametrize(
-    ("low", "high", "covered"),
-    [
-        (1, 11, True),
-        (-5, -1, True),
-        (0, 0, False),
-        (-5, 9, False),
-    ],
+    ("value", "inside"),
+    [(-5, True), (1, True), (INT_MAX, True), (0, False)],
 )
-def test_covers_only_without_a_hole_from_low_to_high(low, high, covered):
-    assert covers(NOT_ZERO, low, high) == covered
+def test_in_bound_only_with_a_divisor_range_around_the_value(value, inside):
+    assert in_bound(BOUND, DIVIDE, value) == inside

@@ -18,6 +18,15 @@ def load(path):
         return [json.loads(line) for line in lines]
 
 
+# fuzzer-results pairs the seeds and fuzzer-jvm-check builds the bound of one split
+# and one domain, so a file that mixes them would give wrong numbers.
+def split_and_domain(rows) -> tuple[str, str]:
+    kinds = {(row["split"], row["domain"]) for row in rows}
+    if len(kinds) != 1:
+        raise ValueError(f"Expected one split and domain, got {sorted(kinds)}")
+    return kinds.pop()
+
+
 # A method has unreachable code when the analysis never reaches one of its
 # instructions or one of the case methods it calls. The analysis over-approximates
 # and such an instruction cannot run.
@@ -249,8 +258,11 @@ def designed_numbers(rows):
 def main():
     suite, eff = jpamb.setup()
     bc = jpamb.Bytecode(suite, eff, {})
-    fuzzer_numbers(bc, load(sys.argv[1]))
+    runs = load(sys.argv[1])
+    split_and_domain(runs)
+    fuzzer_numbers(bc, runs)
     if len(sys.argv) > 2:
         rows = load(sys.argv[2])
+        split_and_domain(runs + rows)
         extension.summary(rows, sys.stdout)
         designed_numbers(rows)
