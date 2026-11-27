@@ -50,6 +50,23 @@ python -m pytest solutions/fuzzer/tests
 jpamb interpret fuzzer-interpreter
 ```
 
+## Running on the real JVM
+
+`solutions/bytecode/InstrumentationAgent.java` is a Java agent that instruments the case classes and records the sites and int values a run reaches. It uses `java.lang.classfile`, so it needs JDK 24 or newer. Build it into `build/jvm/` from the root of the repository:
+
+```bash
+mkdir -p build/jvm/classes
+javac -d build/jvm/classes $(find cases solutions/bytecode -name '*.java')
+printf 'Premain-Class: jpamb.InstrumentationAgent\n' > build/jvm/manifest.txt
+(cd build/jvm/classes && jar cfm ../agent.jar ../manifest.txt jpamb/InstrumentationAgent*.class)
+```
+
+`jvm_agent.py` runs one input on the JVM with the agent. `jvm-analysis` is a JPAMB analysis that fuzzes a method on the JVM:
+
+```bash
+jpamb analyse jvm-analysis
+```
+
 ## Notes
 
 The interpreter gets 213 of 266 on JPAMB 0.10. The 53 cases it fails are in `Randomness` with `Smith` inputs, and in `Strings`, `CWE470` and `CWE502` with string methods like `startsWith`, `invokedynamic` and casts. We do not support those.

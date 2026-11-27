@@ -5,6 +5,7 @@ import java.lang.classfile.ClassTransform;
 import java.lang.classfile.CodeBuilder;
 import java.lang.classfile.CodeElement;
 import java.lang.classfile.CodeTransform;
+import java.lang.classfile.Instruction;
 import java.lang.classfile.MethodModel;
 import java.lang.classfile.instruction.ArrayLoadInstruction;
 import java.lang.classfile.instruction.BranchInstruction;
@@ -100,11 +101,17 @@ public static void premain(String agentArgs, Instrumentation inst) {
                           methodModel,
                           (mb, me) -> {
                             if (me instanceof java.lang.classfile.CodeModel codeModel) {
-                              AtomicInteger siteSeq = new AtomicInteger(0);
+                              // A site is named after the bytecode offset of its
+                              // instruction which jpamb's decompiled methods have too.
+                              AtomicInteger offset = new AtomicInteger(0);
                               CodeTransform codeTransform =
                                   (CodeBuilder cb, CodeElement ce) -> {
+                                    int at =
+                                        ce instanceof Instruction ins
+                                            ? offset.getAndAdd(ins.sizeInBytes())
+                                            : offset.get();
                                     if (ce instanceof BranchInstruction) {
-                                      emitSite(cb, methodPrefix + "#jmp@" + siteSeq.getAndIncrement());
+                                      emitSite(cb, methodPrefix + "#jmp@" + at);
                                       cb.with(ce);
                                     } else if (ce instanceof LoadInstruction load
                                         && load.typeKind() == TypeKind.INT) {
@@ -115,7 +122,7 @@ public static void premain(String agentArgs, Instrumentation inst) {
                                               + "#iload"
                                               + load.slot()
                                               + "@"
-                                              + siteSeq.getAndIncrement());
+                                              + at);
                                     } else if (ce instanceof StoreInstruction store
                                         && store.typeKind() == TypeKind.INT) {
                                       cb.with(ce);
@@ -126,7 +133,7 @@ public static void premain(String agentArgs, Instrumentation inst) {
                                               + "#istore"
                                               + store.slot()
                                               + "@"
-                                              + siteSeq.getAndIncrement());
+                                              + at);
                                     } else if (ce instanceof IncrementInstruction inc) {
                                       cb.with(ce);
                                       emitLocalInt(
@@ -136,13 +143,13 @@ public static void premain(String agentArgs, Instrumentation inst) {
                                               + "#iinc"
                                               + inc.slot()
                                               + "@"
-                                              + siteSeq.getAndIncrement());
+                                              + at);
                                     } else if (ce instanceof ConstantInstruction c) {
                                       cb.with(ce);
                                       if (c.constantValue() instanceof Integer) {
                                         emitDupInt(
                                             cb,
-                                            methodPrefix + "#const@" + siteSeq.getAndIncrement());
+                                            methodPrefix + "#const@" + at);
                                       }
                                     } else if (ce instanceof ArrayLoadInstruction arrLoad
                                         && arrLoad.typeKind() == TypeKind.INT) {
@@ -150,23 +157,23 @@ public static void premain(String agentArgs, Instrumentation inst) {
                                           cb,
                                           methodPrefix
                                               + "#iaload_idx@"
-                                              + siteSeq.getAndIncrement());
+                                              + at);
                                       cb.with(ce);
                                       emitDupInt(
                                           cb,
-                                          methodPrefix + "#iaload_res@" + siteSeq.getAndIncrement());
+                                          methodPrefix + "#iaload_res@" + at);
                                     } else if (ce instanceof OperatorInstruction op
                                         && op.typeKind() == TypeKind.INT) {
                                       switch (op.opcode()) {
                                         case IDIV, IREM -> emitDupInt(
                                             cb,
-                                            methodPrefix + "#div_rhs@" + siteSeq.getAndIncrement());
+                                            methodPrefix + "#div_rhs@" + at);
                                         default -> {}
                                       }
                                       cb.with(ce);
                                       switch (op.opcode()) {
                                         case IADD, ISUB, IMUL, IDIV, IREM -> emitDupInt(
-                                            cb, methodPrefix + "#ires@" + siteSeq.getAndIncrement());
+                                            cb, methodPrefix + "#ires@" + at);
                                         default -> {}
                                       }
                                     } else {
@@ -245,7 +252,7 @@ public static void premain(String agentArgs, Instrumentation inst) {
     boolean first = true;
     for (Map.Entry<String, IntValueStats> entry : SITE_INT_STATS.entrySet()) {
       if (!first) {
-        sb.append(';');
+        sb.append('|');
       }
       first = false;
       IntValueStats stats = entry.getValue();

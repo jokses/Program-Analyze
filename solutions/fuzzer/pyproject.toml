@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 fuzzer-interpreter = "dynamic:interpret"
 fuzzer-analysis = "dynamic:analyse"
+jvm-analysis = "jvm_agent:analyse"
 fuzzer = "fuzzer:main"
 fuzzer-checks = "checks:main"
 

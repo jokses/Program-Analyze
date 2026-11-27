@@ -2,6 +2,7 @@ package jpamb.utils;
 
 import java.util.ArrayList;
 import java.util.Scanner;
+import java.util.regex.Pattern;
 
 public class InputParser {
   private Scanner sc;
@@ -25,7 +26,7 @@ public class InputParser {
     if (sc.hasNext()) {
       currentToken =
           sc.findWithinHorizon(
-              "[-]?[0-9\\.]+|\\[[ICZ]:|\\(|\\)|\\]|,|'[^']'|[sr]'[^']*'|true|false", 0);
+              "[-]?[0-9\\.]+|\\[[ICZ]:|\\(|\\)|\\]|,|'\\\\?[^']'|[sr]'[^']*'|true|false", 0);
     } else {
       currentToken = null;
     }
@@ -38,6 +39,18 @@ public class InputParser {
     nextToken();
   }
 
+  // A command line argument cannot hold a NUL so a runner writes it as \0 and a
+  // backslash as \\.
+  private static final Pattern ESCAPE = Pattern.compile("\\\\([0\\\\])");
+
+  private static String unescape(String text) {
+    return ESCAPE.matcher(text).replaceAll(escape -> escape.group(1).equals("0") ? "\0" : "\\\\");
+  }
+
+  private static char parseChar(String token) {
+    return unescape(token.substring(1, token.length() - 1)).charAt(0);
+  }
+
   public static Object[] parse(String inputs) {
     return new InputParser(inputs).parseInputs();
   }
@@ -47,12 +60,12 @@ public class InputParser {
       int value = Integer.parseInt(currentToken);
       nextToken();
       return value;
-    } else if (currentToken.matches("'[^']'")) {
-      var chr = currentToken.charAt(1);
+    } else if (currentToken.matches("'\\\\?[^']'")) {
+      var chr = parseChar(currentToken);
       nextToken();
       return chr;
     } else if (currentToken.matches("s'[^']*'")) {
-      var string = currentToken.substring(2, currentToken.length() - 1);
+      var string = unescape(currentToken.substring(2, currentToken.length() - 1));
       nextToken();
       return string;
     } else if (currentToken.matches("r'[^']*'")) {
@@ -90,14 +103,14 @@ public class InputParser {
       return new int[] {};
     }
 
-    if (!currentToken.matches("[0-9]+")) expected("integer");
+    if (!currentToken.matches("-?[0-9]+")) expected("integer");
 
     items.add(Integer.parseInt(currentToken));
     nextToken();
 
     while (currentToken != null && currentToken.equals(",")) {
       nextToken();
-      if (currentToken == null || !currentToken.matches("[0-9]+")) expected("integer");
+      if (currentToken == null || !currentToken.matches("-?[0-9]+")) expected("integer");
       items.add(Integer.parseInt(currentToken));
       nextToken();
     }
@@ -122,15 +135,15 @@ public class InputParser {
       return new char[] {};
     }
 
-    if (!currentToken.matches("'[^']+'")) expected("char");
+    if (!currentToken.matches("'\\\\?[^']'")) expected("char");
 
-    items.add(currentToken.charAt(1));
+    items.add(parseChar(currentToken));
     nextToken();
 
     while (currentToken != null && currentToken.equals(",")) {
       nextToken();
-      if (currentToken == null || !currentToken.matches("'[^']+'")) expected("char");
-      items.add(currentToken.charAt(1));
+      if (currentToken == null || !currentToken.matches("'\\\\?[^']'")) expected("char");
+      items.add(parseChar(currentToken));
       nextToken();
     }
 

@@ -10,6 +10,7 @@ The interval analysis that gives the fuzzer its bound, and the scripts that run 
 - `evaluation.py` is `fuzzer-with-bound`: the fuzzer with the bound from the analysis.
 - `extension.py` is `fuzzer-extension`. For each range the range fuzzer did not cover, it tries going backwards along a run, Group 5's binary search and fuzzing ten times longer. Combined is going backwards first and the binary search after it.
 - `results.py` is `fuzzer-results`. It prints the numbers the proposal asks for, with paired sign tests over the seeds.
+- `jvm_check.py` is `fuzzer-jvm-check`. It runs every kept input of a round again on the real JVM with the agent (see `solutions/fuzzer/README.md` for building it), and checks that the JVM gives our interpreter's outcome and that every divisor the JVM sees is in the bound.
 
 ## Running a round
 
