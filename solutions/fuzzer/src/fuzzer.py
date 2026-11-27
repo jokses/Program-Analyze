@@ -84,7 +84,11 @@ def fuzz(
     method = bc.getmethod(methodid)
     params = list(methodid.extension.params)
     corpus = dynamic.Corpus(params, rand)
-    constants = sorted(dynamic.ints_in_method(method))
+    # The split points are where the ranges change so they are tried first too, like
+    # c - 1 and c + 1 next to c with --split boundary.
+    # Source: Andersen et al., "Fuzz Smarter, Not Harder", PPPA'24 volume 1, section 2.
+    points = dynamic.split_points(set(dynamic.comparisons_in_method(methodid)), split)
+    constants = sorted(dynamic.ints_in_method(method) | set(points))
     constants += dynamic.strings_in_method(method)
     first_codes = [b""] + [
         dynamic.constant_code(params, constant) for constant in constants

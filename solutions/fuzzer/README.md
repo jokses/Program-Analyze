@@ -2,7 +2,7 @@
 
 We followed the course notes on [selecting input](https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:selecting-inputs). `fuzz_input` makes random inputs, the constants in the method are used as a dictionary and `Corpus` keeps the inputs that give new coverage. `Draw` and `fuzz_type` are from Christian's [extra-fuzzer commit](https://github.com/kalhauge/jpamb/commit/7a7a36af695aae8638be4983e291d456d4eff277).
 
-The fuzzer has three versions, `random`, `instruction` and `range`. All of them first try the empty input and the constants in the method. `random` then makes random inputs. `instruction` mutates the inputs that ran a new instruction and `range` the inputs that ran a new instruction or hit a new range. They stop after 1,000 runs with nothing new or 100,000 runs in total. `instruction` also stops when it has run every instruction.
+The fuzzer has three versions, `random`, `instruction` and `range`. All of them first try the empty input, the constants in the method and its split points. `random` then makes random inputs. `instruction` mutates the inputs that ran a new instruction and `range` the inputs that ran a new instruction or hit a new range. They stop after 1,000 runs with nothing new or 100,000 runs in total. `instruction` also stops when it has run every instruction.
 
 ## Running
 
