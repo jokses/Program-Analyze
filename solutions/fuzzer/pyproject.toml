@@ -24,6 +24,20 @@ syntactic = { path = "../syntactic", editable = true }
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.168.0",
+    "hypothesis>=6.168.2",
     "pytest>=9.1.1",
 ]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+# jpamb and jvm are imported last, as in the rest of the repo.
+src = ["../../src"]
+
+[tool.ruff.lint]
+extend-select = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# fuzzer.py writes a crash row for any exception.
+"src/fuzzer.py" = ["BLE001"]
+# Line length is not checked in teammates' files.
+"src/dynamic.py" = ["E501"]

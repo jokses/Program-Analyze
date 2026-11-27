@@ -1,5 +1,4 @@
 import pytest
-
 from results import sign_test, split_and_domain
 
 

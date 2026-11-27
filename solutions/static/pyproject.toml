@@ -5,12 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "static"
 version = "0.1.0"
-description = "The start of an abstract interpreter"
+description = "The interval analysis that gives the fuzzer its bound, and the scripts that run and summarize the evaluation"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
   "fuzzer",
-  "hypothesis>=6.168.2",
   "jpamb",
   "syntactic",
 ]
@@ -31,6 +30,27 @@ syntactic = { path = "../syntactic", editable = true }
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.168.2",
     "pytest>=9.1.1",
 ]
 
+[tool.ruff]
+extend = "../../pyproject.toml"
+# jpamb and jvm are imported last, as in the rest of the repo.
+src = ["../../src"]
+
+[tool.ruff.lint]
+extend-select = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# extension.py writes an error row for any exception.
+"src/extension.py" = ["BLE001"]
+# The lattice tests compare a value with itself on purpose.
+"src/tools.py" = ["PLR0124"]
+# The file's own test runner prints FAIL for any exception.
+"tests/test_interval_outliers_abs.py" = ["BLE001", "PLR0124"]
+# Line length is not checked in teammates' files. Most of unbounded.py is a
+# teammate's, and it answers maybe to every query when the analysis fails.
+"src/absIntervals.py" = ["E501"]
+"src/absSigns.py" = ["E501"]
+"src/unbounded.py" = ["BLE001", "E501"]

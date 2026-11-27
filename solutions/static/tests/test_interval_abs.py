@@ -1,14 +1,13 @@
-import absIntervals as ab
 import operator
 
-from tools import is_galoi, is_lattice, is_poset
-import jvm.state as jvms
-
-from hypothesis import given, settings, strategies as st
-
-
+import absIntervals as ab
 from absIntervals import INT_MAX, INT_MIN, Interval
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from tools import is_galoi, is_lattice, is_poset
+
 import jvm
+import jvm.state as jvms
 
 # Creating the overflow for the int range that Java handles
 java_int = st.one_of(

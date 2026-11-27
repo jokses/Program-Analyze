@@ -40,7 +40,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "hypothesis", specifier = ">=6.168.0" },
+    { name = "hypothesis", specifier = ">=6.168.2" },
     { name = "pytest", specifier = ">=9.1.1" },
 ]
 
@@ -245,26 +245,28 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fuzzer" },
-    { name = "hypothesis" },
     { name = "jpamb" },
     { name = "syntactic" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "hypothesis" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fuzzer", editable = "../fuzzer" },
-    { name = "hypothesis", specifier = ">=6.168.2" },
     { name = "jpamb", editable = "../../" },
     { name = "syntactic", editable = "../syntactic" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "hypothesis", specifier = ">=6.168.2" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
 
 [[package]]
 name = "syntactic"

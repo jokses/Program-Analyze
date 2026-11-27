@@ -28,5 +28,6 @@ The three split took 88 minutes on our machine and the boundary split 140, most 
 ## Tests
 
 ```bash
+uv pip install --group solutions/static/pyproject.toml:dev
 python -m pytest solutions/static/tests
 ```

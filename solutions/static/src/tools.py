@@ -26,7 +26,7 @@ def is_reflexive(a: Poset):
     # Checking if the relation is reflexive (a == a)
     assert (
         a == a
-    ), f"Reflexivity check failed: Element {a} is not related to itself."  # noqa: PLR0124
+    ), f"Reflexivity check failed: Element {a} is not related to itself."
 
 
 def is_antisymmetric(a: Poset, b: Poset):

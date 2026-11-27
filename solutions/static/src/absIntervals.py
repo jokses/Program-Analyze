@@ -97,9 +97,7 @@ class Interval(Abstraction, Lattice):
         return other.min <= self.min and self.max <= other.max
 
     def __gt__(self, other: "Interval") -> bool:
-        if self == other:
-            return False
-        elif self.is_bot():
+        if self == other or self.is_bot():
             return False
         elif other.is_bot():
             return True
@@ -376,7 +374,7 @@ class Interval(Abstraction, Lattice):
         KSorted = sorted(k for k in K if lo <= k <= hi)
 
         cursor = lo
-        interval_list = list()
+        interval_list = []
         for k in KSorted:
             if cursor < k:
                 interval_list.append(Interval(cursor, k - 1))

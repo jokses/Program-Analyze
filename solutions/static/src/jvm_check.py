@@ -5,12 +5,12 @@ from collections import defaultdict
 import dynamic
 import fuzzer
 import jvm_agent
+from results import load, split_and_domain
 from unbounded import RangeCoverageOracle
 
 import jpamb
 import jvm
 from jvm.state import PC
-from results import load, split_and_domain
 
 # A JVM run that takes longer than this is *, like a run over the interpreter's steps.
 JVM_TIMEOUT = 5.0

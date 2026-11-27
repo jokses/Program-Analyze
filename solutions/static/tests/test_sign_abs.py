@@ -1,7 +1,7 @@
 import absSigns as ab
-from tools import is_galoi, is_lattice, is_poset
 from hypothesis import given
 from hypothesis import strategies as st
+from tools import is_galoi, is_lattice, is_poset
 
 import jvm
 import jvm.state as jvms

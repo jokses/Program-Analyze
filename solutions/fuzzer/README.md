@@ -45,7 +45,7 @@ Under a method it also prints, for each range of it in `designed_ranges.json`, i
 Run the tests, and check the interpreter against JPAMB:
 
 ```bash
-uv pip install pytest hypothesis
+uv pip install --group solutions/fuzzer/pyproject.toml:dev
 python -m pytest solutions/fuzzer/tests
 jpamb interpret fuzzer-interpreter
 ```

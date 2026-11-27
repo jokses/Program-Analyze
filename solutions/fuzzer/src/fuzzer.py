@@ -211,13 +211,14 @@ def parse_methods(parser: argparse.ArgumentParser, domains: tuple[str, ...] = ()
 # on the fuzzer.
 def main(bound_of=None, domains: tuple[str, ...] = ()):
     parser = argparse.ArgumentParser(
-        description="Fuzz JPAMB methods and write one JSON row per method, version and seed."
+        description="Fuzz JPAMB methods, one JSON row per method, version and seed."
     )
     parser.add_argument("--versions", default=",".join(VERSIONS))
     args, bc, methods = parse_methods(parser, domains)
     domain = args.domain if domains else ""
 
-    # Absolute menace of a loop composition as this would never ever be acceptable theoretically but it works pratically.
+    # Absolute menace of a loop composition as this would never ever be acceptable
+    # theoretically but it works pratically.
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
         for methodid in methods:
             bound = None
@@ -227,7 +228,7 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
                 start = time.process_time()
                 try:
                     bound = frozenset(bound_of(bc, methodid, args.split, domain))
-                except Exception as error:  # ruff: ignore[BLE001]
+                except Exception as error:
                     analysis_error = error
                 analysis_seconds = round(time.process_time() - start, 3)
             for version in args.versions.split(","):
@@ -248,7 +249,7 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
                             result = replace(
                                 result, domain=domain, analysis_seconds=analysis_seconds
                             )
-                        except Exception as crash:  # ruff: ignore[BLE001]
+                        except Exception as crash:
                             # The interpreter and fuzz_input raise on what they do not
                             # support.
                             error = crash

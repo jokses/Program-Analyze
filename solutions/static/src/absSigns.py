@@ -217,9 +217,7 @@ class SignSet(Abstraction, Lattice):
                     for y in other.signs:
                         if x < y:
                             cases.add(True)
-                        elif x > y:
-                            cases.add(False)
-                        elif x == 0 or y == 0:
+                        elif x > y or x == 0 or y == 0:
                             cases.add(False)
                         else:
                             cases.update([True, False])
@@ -244,9 +242,7 @@ class SignSet(Abstraction, Lattice):
                     for y in other.signs:
                         if x > y:
                             cases.add(True)
-                        elif x < y:
-                            cases.add(False)
-                        elif x == 0 or y == 0:
+                        elif x < y or x == 0 or y == 0:
                             cases.add(False)
                         else:
                             cases.update([True, False])

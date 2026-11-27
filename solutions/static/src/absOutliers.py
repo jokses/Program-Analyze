@@ -2,11 +2,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Self
 
-import jvm
-import jvm.state as jvms
-
 from absIntervals import INT_MAX, INT_MIN, Interval
 from tools import Abstraction, Lattice
+
+import jvm
+import jvm.state as jvms
 
 # Maximum outliers accepted
 MAX_OUTLIERS = 7
@@ -91,7 +91,7 @@ class IntervalOutliers(Abstraction, Lattice):
     # Does the given interval or set contain a given value
     def __contains__(self, value: jvms.StackValue) -> bool:
         v = value.value
-        return self.iv.min <= v and v <= self.iv.max or v in self.outliers
+        return self.iv.min <= v <= self.iv.max or v in self.outliers
 
     def __or__(self, other: "IntervalOutliers") -> "IntervalOutliers":
         return IntervalOutliers.make(self.pieces + other.pieces)

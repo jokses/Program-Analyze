@@ -9,7 +9,7 @@ import operator
 import sys
 import traceback
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from absIntervals import INT_MAX, INT_MIN, Interval, wrap_or_top
@@ -44,7 +44,8 @@ NEGATED = {
 
 
 # The ISY constants of every case, written by
-# python solutions/syntactic/src/syntactic_constants.py --all --out solutions/syntactic/constants.json
+# python solutions/syntactic/src/syntactic_constants.py --all \
+#     --out solutions/syntactic/constants.json
 CONSTANTS_JSON = Path(__file__).resolve().parents[2] / "syntactic" / "constants.json"
 
 
@@ -158,7 +159,7 @@ class Val:
     src: int | None = None
     may_null: bool = False
     may_nonnull: bool = True
-    elem_iv: Interval = Interval.top()
+    elem_iv: Interval = field(default_factory=Interval.top)
     len_of: int | None = None
     bounded_by: int | None = None
     alloc_id: int | None = None
@@ -717,7 +718,9 @@ class UnboundedIntervalAnalysis:
                     case _:
                         target = Interval.top()
                 iv = cast_interval(val.iv, target)
-                cast_out = map_pieces(val.out, lambda piece: cast_interval(piece, target))
+                cast_out = map_pieces(
+                    val.out, lambda piece: cast_interval(piece, target)
+                )
                 out.append((pc + 1, after.push(Val(iv, out=cast_out))))
 
             case jvm.Binary(operant=op):
@@ -825,7 +828,9 @@ class UnboundedIntervalAnalysis:
 
             case jvm.Ifz(condition=cond, target=target):
                 [a], after = state.pop(1)
-                out.extend(self._branch(pc, after, a, Val(Interval.const(0)), cond, target))
+                out.extend(
+                    self._branch(pc, after, a, Val(Interval.const(0)), cond, target)
+                )
 
             case jvm.If(condition=cond, target=target):
                 [a, b], after = state.pop(2)
@@ -876,6 +881,7 @@ class UnboundedIntervalAnalysis:
                     out.append("null pointer")
                 if recv_arg.may_nonnull:
                     returns_void = m.extension.return_type is None
+                    after_any_result = after if returns_void else after.push(Val.top())
                     classname_str = m.classname.dotted()
                     method_name = m.extension.name
 
@@ -898,9 +904,7 @@ class UnboundedIntervalAnalysis:
                                 )
                                 out.append((pc + 1, after.push(Val(ch_iv))))
                             case _:
-                                out.append(
-                                    (pc + 1, after if returns_void else after.push(Val.top()))
-                                )
+                                out.append((pc + 1, after_any_result))
                     elif classname_str == "jpamb.utils.Smith":
                         self.has_unknown_call = True
                         if method_name in ("nextBoolean", "flip"):
@@ -927,9 +931,7 @@ class UnboundedIntervalAnalysis:
                             if not any(name in str(m) for name in SAFE_CALLS):
                                 self.has_unknown_call = True
                                 self.outcomes.update(ALL_OUTCOMES)
-                            out.append(
-                                (pc + 1, after if returns_void else after.push(Val.top()))
-                            )
+                            out.append((pc + 1, after_any_result))
 
             case _:
                 self.has_unknown_call = True
@@ -1217,7 +1219,7 @@ def analyse():
         final = analysis.outcomes
         diverge = analysis.may_diverge()
         incomplete = False
-    except Exception as error:  # ruff: ignore[BLE001]
+    except Exception as error:
         traceback.print_exc()
         print(f"analysis failed: {error!r}", file=sys.stderr)
         final = set()

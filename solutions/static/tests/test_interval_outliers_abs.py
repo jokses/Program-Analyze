@@ -13,12 +13,12 @@ import signal
 import sys
 import traceback
 
+import absOutliers as mod
+from absIntervals import Interval
+from absOutliers import IntervalOutliers as IO
+
 import jvm
 from jvm.state import StackInt as SV
-
-from absIntervals import Interval
-import absOutliers as mod
-from absOutliers import IntervalOutliers as IO
 
 B, C = jvm.BinaryOpr, jvm.CmpOpr
 GAP, MAX_OUTLIERS = mod.GAP, mod.MAX_OUTLIERS
@@ -161,20 +161,20 @@ def test_meet():
 
 def test_le_table():
     cases = [
-        (val(0, 1, 2, 3, 4, 500), val(*range(0, 101), 1000), False),
-        (val(*range(200, 205)), val(*range(0, 101), 1000), False),
-        (val(1000), val(*range(0, 101), 1000), True),
-        (val(*range(0, 101), 1000), val(*range(0, 101), 1000), True),
+        (val(0, 1, 2, 3, 4, 500), val(*range(101), 1000), False),
+        (val(*range(200, 205)), val(*range(101), 1000), False),
+        (val(1000), val(*range(101), 1000), True),
+        (val(*range(101), 1000), val(*range(101), 1000), True),
         (IO(Interval(5, 6)), IO(Interval(0, 4), frozenset({5, 6})), True),
-        (IO.bot(), val(*range(0, 101), 1000), True),
-        (val(*range(0, 11)), IO(Interval(0, 4), frozenset({10})), False),
+        (IO.bot(), val(*range(101), 1000), True),
+        (val(*range(11)), IO(Interval(0, 4), frozenset({10})), False),
     ]
     for a, b, expected in cases:
         assert (a <= b) == expected, f"{a} <= {b} gave {a <= b}, expected {expected}"
 
 
 def test_lt():
-    a, b = val(1, 2, 3), val(*range(0, 10))
+    a, b = val(1, 2, 3), val(*range(10))
     assert a < b
     assert not b < a
     assert not a < a
@@ -217,9 +217,9 @@ def test_compare_uses_holes():
 
 def test_refine():
     a, b = val(0, 1, 2, 3, 4, 1234), val(100)
-    na, nb = a.refine(b, C.Gt, True)  # x > 100
+    na, _ = a.refine(b, C.Gt, True)  # x > 100
     assert ints_of(na) == {1234}, na
-    na, nb = a.refine(b, C.Gt, False)  # x <= 100
+    na, _ = a.refine(b, C.Gt, False)  # x <= 100
     assert ints_of(na) == {0, 1, 2, 3, 4}, na
 
 

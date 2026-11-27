@@ -46,7 +46,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "hypothesis", specifier = ">=6.168.0" },
+    { name = "hypothesis", specifier = ">=6.168.2" },
     { name = "pytest", specifier = ">=9.1.1" },
 ]
 
@@ -130,7 +130,7 @@ wheels = [
 
 [[package]]
 name = "jpamb"
-version = "0.8.0"
+version = "0.10.0"
 source = { editable = "../../" }
 dependencies = [
     { name = "click" },
@@ -140,7 +140,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = "==8.1.*" },
+    { name = "click", specifier = "==8.*" },
     { name = "pyyaml", specifier = "==6.0.*" },
     { name = "runit", git = "https://github.com/kalhauge/runit.git" },
 ]

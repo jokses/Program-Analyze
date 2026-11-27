@@ -197,7 +197,7 @@ def main():
                         bc, methodid, oracle, seed, args.split, int_params
                     )
             # A crash in one method becomes an error row and the next method runs.
-            except Exception as error:  # ruff: ignore[BLE001]
+            except Exception as error:
                 new_rows = [
                     {
                         "method": methodid.encode(),
