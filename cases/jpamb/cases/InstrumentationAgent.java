@@ -62,6 +62,8 @@ public class InstrumentationAgent {
   }
 
 public static void premain(String agentArgs, Instrumentation inst) {
+    // jpamb.Runtime only prints the outcome so the agent prints its summary when the JVM exits.
+    java.lang.Runtime.getRuntime().addShutdownHook(new Thread(() -> System.out.println(dumpSummary())));
     inst.addTransformer(
         new ClassFileTransformer() {
           @Override
