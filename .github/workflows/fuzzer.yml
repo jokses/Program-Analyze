@@ -1,5 +1,7 @@
 name: Fuzzer and interval analysis
 on: [push, pull_request]
+permissions:
+  contents: read
 concurrency:
   group: fuzzer-${{ github.ref }}
   cancel-in-progress: true
@@ -7,30 +9,22 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
       - name: Run ruff check
         run: uv run ruff check solutions/fuzzer solutions/static
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
-          enable-cache: true
-        # This looks a bit rough though it works
+          activate-environment: true
+          no-project: true
+          venv-path: .jpamb-eval
       - name: Install the packages and their test tools
-        run: |
-          uv venv --no-project .jpamb-eval
-          echo "VIRTUAL_ENV=$PWD/.jpamb-eval" >> "$GITHUB_ENV"
-          echo "$PWD/.jpamb-eval/bin" >> "$GITHUB_PATH"
-          VIRTUAL_ENV="$PWD/.jpamb-eval" uv pip install --editable . \
-            --editable solutions/fuzzer --editable solutions/static \
-            --group solutions/fuzzer/pyproject.toml:dev \
-            --group solutions/static/pyproject.toml:dev
+        run: >
+          uv pip install --editable . --editable solutions/fuzzer --editable solutions/static
+          --group solutions/fuzzer/pyproject.toml:dev --group solutions/static/pyproject.toml:dev
       - name: Run the tests
         run: python -m pytest solutions/fuzzer/tests solutions/static/tests

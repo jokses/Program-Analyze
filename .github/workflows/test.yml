@@ -1,5 +1,7 @@
 name: Test Suite
 on: [push, pull_request]
+permissions:
+  contents: read
 concurrency:
   group: test-${{ github.ref }}
   cancel-in-progress: true
@@ -14,9 +16,9 @@ jobs:
         os: [ubuntu-latest, windows-2025]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       # Docker is only needed for `build` and `checkhealth --docker`.
