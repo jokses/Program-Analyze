@@ -63,6 +63,13 @@ def inside(covered, designed) -> bool:
     return same_operand and within(designed, low, high)
 
 
+# Only range uses the bound, so only its seconds include the analysis.
+def cpu_seconds(rows, version) -> list[float]:
+    if version == fuzzer.Version.RANGE:
+        return [row["cpu_seconds"] + row["analysis_seconds"] for row in rows]
+    return [row["cpu_seconds"] for row in rows]
+
+
 def reached(row, designed) -> bool:
     return any(inside(covered, designed) for covered in row["ranges"])
 
@@ -108,12 +115,7 @@ def main():
             for outcome in expected[method] - set(row["outcomes"]):
                 label = f"{outcome} (with *)" if hit_step_limit else outcome
                 missed[label] += 1
-        # Only range uses the bound, so only its seconds include the analysis.
-        seconds = [row["cpu_seconds"] for row in seed_rows]
-        if version == fuzzer.Version.RANGE:
-            seconds = [
-                cpu + row["analysis_seconds"] for cpu, row in zip(seconds, seed_rows)
-            ]
+        seconds = cpu_seconds(seed_rows, version)
         bound = "-"
         bound_size = seed_rows[0]["bound_size"]
         if bound_size is not None:

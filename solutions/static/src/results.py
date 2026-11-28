@@ -83,6 +83,8 @@ def unreachable_numbers(bc, groups, methods, domain):
             unreachable.append(method)
     ratios = []
     earlier = pair_count = 0
+    # The same test with one observation per method: its median runs.
+    earlier_methods = 0
     for method in unreachable:
         seed_pairs = paired(groups, method)
         # A version with only crash rows has no pair.
@@ -93,6 +95,7 @@ def unreachable_numbers(bc, groups, methods, domain):
         instruction_median = checks.median(instruction_runs)
         range_median = checks.median(range_runs)
         ratios.append(instruction_median / range_median)
+        earlier_methods += range_median < instruction_median
         for by_instruction, by_range in zip(instruction_runs, range_runs):
             earlier += by_range < by_instruction
         pair_count += len(seed_pairs)
@@ -114,6 +117,14 @@ def unreachable_numbers(bc, groups, methods, domain):
         pair_count,
         "paired seeds, sign test p =",
         f"{sign_test(earlier, pair_count):.2g}",
+    )
+    print(
+        "range stops earlier than instruction in median runs on",
+        earlier_methods,
+        "of",
+        len(ratios),
+        "methods, sign test p =",
+        f"{sign_test(earlier_methods, len(ratios)):.2g}",
     )
 
 
@@ -190,6 +201,22 @@ def version_numbers(groups, expected):
             "of",
             len(designed_rows),
         )
+        # A seed that hit the step limit may have found the outcome with more steps.
+        missed_at_limit = sum(
+            misses_an_outcome(row, expected) and "*" in row["outcomes"]
+            for row in version_rows
+        )
+        print(
+            f"  {version} seeds missing a listed outcome that hit the step limit",
+            missed_at_limit,
+        )
+        seconds = checks.cpu_seconds(version_rows, version)
+        print(
+            f"  {version} CPU seconds per seed, median",
+            round(checks.median(seconds), 3),
+            "total",
+            round(sum(seconds), 1),
+        )
 
 
 def bound_numbers(groups, expected):
@@ -220,6 +247,8 @@ def fuzzer_numbers(bc, rows, domain):
     groups = group_runs(rows)
     methods = sorted({method for method, _ in groups})
     print("methods", len(methods), "rows", sum(len(runs) for runs in groups.values()))
+    crashed = {row["method"] for row in rows if row["stop_reason"] == fuzzer.Stop.CRASH}
+    print("methods left out because they crash", len(crashed - set(methods)))
     unreachable_numbers(bc, groups, methods, domain)
     full_coverage_numbers(groups, methods)
     expected = checks.expected_outcomes()
