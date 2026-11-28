@@ -16,7 +16,13 @@ from absIntervals import INT_MAX, INT_MIN, Interval, wrap_or_top
 from absIntervalSets import IntervalSet
 from absOutliers import IntervalOutliers
 from absSigns import SignSet
-from dynamic import comparisons_in_method, operands, range_of, split_points
+from dynamic import (
+    comparisons_in_method,
+    ints_in_method,
+    operands,
+    range_of,
+    split_points,
+)
 from syntactic_constants import MethodConstants
 
 import jpamb
@@ -33,10 +39,9 @@ ALL_OUTCOMES = {
     "out of bounds",
 }
 STRING = "java.lang.String"
-# The values of Java's short, byte and char.
-SHORT = Interval(-(2**15), 2**15 - 1)
-BYTE = Interval(-(2**7), 2**7 - 1)
-CHAR = Interval(0, 2**16 - 1)
+CHAR_IV = Interval(0, 65535)
+SHORT_IV = Interval(-32768, 32767)
+BYTE_IV = Interval(-128, 127)
 
 
 class AnalysisError(Exception):
@@ -166,12 +171,6 @@ def negate_interval(iv: Interval) -> Interval:
     return wrap_or_top(-iv.max, -iv.min)
 
 
-# The smallest interval with every number in it, empty without numbers.
-def interval_of(numbers) -> Interval:
-    numbers = list(numbers)
-    return Interval(min(numbers), max(numbers)) if numbers else Interval.bot()
-
-
 # Methods by name, then their pcs in order.
 def pc_order(pc: PC) -> tuple[str, int]:
     return (str(pc.method), pc.offset)
@@ -218,11 +217,6 @@ class Val:
     def null(cls) -> Val:
         return cls(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
 
-    # A reference that is not null, to an array or a string of any length.
-    @classmethod
-    def reference(cls) -> Val:
-        return cls(Interval.top(), is_ref=True)
-
     def join(
         self,
         other: Val,
@@ -245,13 +239,13 @@ class Val:
 
         return Val(
             iv=iv,
-            src=same_or_none(self.src, other.src),
+            src=_same(self.src, other.src),
             may_null=self.may_null or other.may_null,
             may_nonnull=self.may_nonnull or other.may_nonnull,
             elem_iv=elem_iv,
-            len_of=same_or_none(self.len_of, other.len_of),
-            bounded_by=same_or_none(self.bounded_by, other.bounded_by),
-            alloc_id=same_or_none(self.alloc_id, other.alloc_id),
+            len_of=_same(self.len_of, other.len_of),
+            bounded_by=_same(self.bounded_by, other.bounded_by),
+            alloc_id=_same(self.alloc_id, other.alloc_id),
             is_ref=self.is_ref or other.is_ref,
             piece_set=piece_set,
         )
@@ -263,9 +257,8 @@ class Val:
         return f"{prefix}{self.iv}"
 
 
-# A value two joined states agree on, or None when they differ.
-def same_or_none(first: int | None, second: int | None) -> int | None:
-    return first if first == second else None
+def _same[T](a: T, b: T) -> T | None:
+    return a if a == b else None
 
 
 # Two unknown (None) values do not count as equal.
@@ -279,6 +272,19 @@ def is_update_by_constant(load, push, binary, local: int) -> bool:
     loads_local = isinstance(load, jvm.Load) and load.index == local
     pushes_int = isinstance(push, jvm.Push) and isinstance(push.type, jvm.Int)
     return loads_local and pushes_int and isinstance(binary, jvm.Binary)
+
+
+def _ref_val(
+    iv: Interval, *, may_null: bool, elem_iv: Interval | None = None
+) -> Val:
+    elements = Interval.top() if elem_iv is None else elem_iv
+    return Val(iv, may_null=may_null, may_nonnull=True, elem_iv=elements, is_ref=True)
+
+
+def _string_val(s: str) -> Val:
+    ords = [ord(c) for c in s]
+    e_iv = Interval(min(ords), max(ords)) if ords else Interval.bot()
+    return _ref_val(Interval.const(len(s)), may_null=False, elem_iv=e_iv)
 
 
 # The length of an array or a string.
@@ -411,6 +417,52 @@ class State(sexpr.AsSExpr):
         return State(locs, stack)
 
 
+def _default_param_val(param: jvm.Type) -> Val:
+    match param:
+        case jvm.Int():
+            return Val(Interval.top())
+        case jvm.Short():
+            return Val(SHORT_IV)
+        case jvm.Byte():
+            return Val(BYTE_IV)
+        case jvm.Char():
+            return Val(CHAR_IV)
+        case jvm.Boolean():
+            return Val(Interval(0, 1))
+        case jvm.Array(contains=jvm.Char()):
+            return _ref_val(Interval.nonneg(), may_null=True, elem_iv=CHAR_IV)
+        case jvm.Object(classname=c) if c.dotted() == STRING:
+            return _ref_val(Interval.nonneg(), may_null=True, elem_iv=CHAR_IV)
+        case _:
+            return _ref_val(Interval.nonneg(), may_null=True)
+
+
+def _concrete_input_val(item: object) -> Val:
+    match item:
+        case jpamb.case.Boolean(value=v):
+            return Val(Interval.const(1 if v else 0))
+        case jpamb.case.Int(value=v):
+            return Val(Interval.const(int(v)))
+        case jpamb.case.Array(contains=jvm.Char(), values=vals):
+            ords = [ord(a) for a in vals]
+            return _ref_val(
+                Interval.const(len(vals)),
+                may_null=False,
+                elem_iv=Interval(min(ords), max(ords)) if ords else Interval.bot(),
+            )
+        case jpamb.case.Array(values=vals):
+            nums = [int(v) for v in vals]
+            return _ref_val(
+                Interval.const(len(vals)),
+                may_null=False,
+                elem_iv=Interval(min(nums), max(nums)) if nums else Interval.bot(),
+            )
+        case jpamb.case.String(value=s):
+            return _string_val(s)
+        case _:
+            return _ref_val(Interval.top(), may_null=True)
+
+
 class UnboundedIntervalAnalysis:
     def __init__(
         self,
@@ -450,13 +502,8 @@ class UnboundedIntervalAnalysis:
                 ks |= set(syn.with_neighbours())
                 ks |= set(syn.comparisons)
 
-            method = self.bc.getmethod(m)
-            for opr in method.opcodes:
-                match opr:
-                    case jvm.Push(value=int() as value) if not isinstance(value, bool):
-                        ks |= {value - 1, value, value + 1}
-                    case jvm.Incr(amount=a):
-                        ks.add(a)
+            for value in ints_in_method(self.bc.getmethod(m)):
+                ks |= {value - 1, value, value + 1}
 
             self.K_cache[m] = {k for k in ks if INT_MIN <= k <= INT_MAX}
         return self.K_cache[m]
@@ -482,80 +529,10 @@ class UnboundedIntervalAnalysis:
 
         if self.inputs is None:
             for i, p in enumerate(params):
-                match p:
-                    case jvm.Int():
-                        locs[i] = Val(Interval.top())
-                    case jvm.Short():
-                        locs[i] = Val(SHORT)
-                    case jvm.Byte():
-                        locs[i] = Val(BYTE)
-                    case jvm.Char():
-                        locs[i] = Val(CHAR)
-                    case jvm.Boolean():
-                        locs[i] = Val(Interval(0, 1))
-                    case jvm.Array(contains=jvm.Char()):
-                        locs[i] = Val(
-                            Interval.nonneg(),
-                            may_null=True,
-                            may_nonnull=True,
-                            elem_iv=CHAR,
-                            is_ref=True,
-                        )
-                    case jvm.Object(classname) if classname.dotted() == STRING:
-                        locs[i] = Val(
-                            Interval.nonneg(),
-                            may_null=True,
-                            may_nonnull=True,
-                            elem_iv=CHAR,
-                            is_ref=True,
-                        )
-                    case _:
-                        locs[i] = Val(
-                            Interval.nonneg(),
-                            may_null=True,
-                            may_nonnull=True,
-                            elem_iv=Interval.top(),
-                            is_ref=True,
-                        )
+                locs[i] = _default_param_val(p)
         else:
             for i, x in enumerate(self.inputs.values):
-                match x:
-                    case jpamb.case.Boolean(value=v):
-                        locs[i] = Val(Interval.const(1 if v else 0))
-                    case jpamb.case.Int(value=v):
-                        locs[i] = Val(Interval.const(int(v)))
-                    case jpamb.case.Array(contains=jvm.Char(), values=vals):
-                        ords = [ord(a) for a in vals]
-                        elements = interval_of(ords)
-                        locs[i] = Val(
-                            Interval.const(len(vals)),
-                            may_null=False,
-                            may_nonnull=True,
-                            elem_iv=elements,
-                            is_ref=True,
-                        )
-                    case jpamb.case.Array(values=vals):
-                        elements = interval_of(int(v) for v in vals)
-                        locs[i] = Val(
-                            Interval.const(len(vals)),
-                            may_null=False,
-                            may_nonnull=True,
-                            elem_iv=elements,
-                            is_ref=True,
-                        )
-                    case jpamb.case.String(value=s):
-                        ords = [ord(c) for c in s]
-                        elements = interval_of(ords)
-                        locs[i] = Val(
-                            Interval.const(len(s)),
-                            may_null=False,
-                            may_nonnull=True,
-                            elem_iv=elements,
-                            is_ref=True,
-                        )
-                    case _:
-                        locs[i] = replace(Val.reference(), may_null=True)
-
+                locs[i] = _concrete_input_val(x)
         for i, iv in self.param_ivs.items():
             locs[i] = replace(locs[i], iv=locs[i].iv & iv)
         return State(tuple(locs), ())
@@ -709,36 +686,85 @@ class UnboundedIntervalAnalysis:
         out.append((PC(method, 0), State(tuple(locs), ())))
         return out
 
+    def _step_push(
+        self, pc: PC, state: State, t: jvm.Type, v: object
+    ) -> tuple[PC, State]:
+        match t:
+            case jvm.Int():
+                va = Val(Interval.const(int(v)))
+            case jvm.Reference() | jvm.Array():
+                va = Val.null()
+            case jvm.Object(classname) if classname.dotted() == STRING:
+                va = _string_val(str(v))
+            case _:
+                if v is None:
+                    va = Val.null()
+                elif isinstance(v, (bool, int)):
+                    va = Val(Interval.const(int(v)))
+                else:
+                    va = _ref_val(Interval.top(), may_null=False)
+        return (pc + 1, state.push(va))
+
+    def _step_instance_call(
+        self, pc: PC, state: State, m: jvm.AbsMethodID
+    ) -> list[tuple[PC, State] | str]:
+        out: list[tuple[PC, State] | str] = []
+        args, after = state.pop(len(m.extension.params) + 1)
+        # A String cannot change, but getChars writes into a char[].
+        cls_name, m_name = m.classname.dotted(), m.extension.name
+        after = after.forget_elements(args[1:] if cls_name == STRING else args)
+
+        recv_arg = args[0]
+        if recv_arg.may_null:
+            out.append("null pointer")
+        if not recv_arg.may_nonnull:
+            return out
+
+        void_ret = m.extension.return_type is None
+        if cls_name == STRING:
+            if m_name == "equals":
+                out.append((pc + 1, after.push(Val(Interval(0, 1)))))
+            elif m_name == "length":
+                size = Val(length(recv_arg), len_of=recv_arg.src)
+                out.append((pc + 1, after.push(size)))
+            elif m_name == "charAt":
+                idx_arg, str_len = args[1], length(recv_arg)
+                if idx_arg.iv.min < 0 or idx_arg.iv.max >= str_len.min:
+                    out.append("out of bounds")
+                ch_iv = recv_arg.elem_iv if not recv_arg.elem_iv.is_bot() else CHAR_IV
+                out.append((pc + 1, after.push(Val(ch_iv))))
+            else:
+                out.append((pc + 1, after if void_ret else after.push(Val.top())))
+        elif cls_name == "jpamb.utils.Smith":
+            self.has_unknown_call = True
+            flips = m_name in ("nextBoolean", "flip")
+            ret = Val(Interval(0, 1)) if flips else Val(Interval.top())
+            out.append((pc + 1, after if void_ret else after.push(ret)))
+        else:
+            recv = Val(
+                recv_arg.iv,
+                0,
+                elem_iv=recv_arg.elem_iv,
+                is_ref=True,
+                piece_set=recv_arg.piece_set,
+            )
+            called = self._call(pc, m, [recv, *args[1:]], after)
+            if called is not None:
+                out.extend(called)
+            else:
+                if not is_safe_call(m):
+                    self.has_unknown_call = True
+                    self.outcomes.update(ALL_OUTCOMES)
+                out.append((pc + 1, after if void_ret else after.push(Val.top())))
+        return out
+
     def step(self, pc: PC, state: State) -> list[tuple[PC, State] | str]:
         opr = self.bc[pc]
         out: list[tuple[PC, State] | str] = []
 
         match opr:
             case jvm.Push(type=t, value=v):
-                match t:
-                    case jvm.Int():
-                        va = Val(Interval.const(int(v)))
-                    case jvm.Reference() | jvm.Array():
-                        va = Val.null()
-                    case jvm.Object(classname) if classname.dotted() == STRING:
-                        text = str(v)
-                        ords = [ord(char) for char in text]
-                        elements = interval_of(ords)
-                        va = Val(
-                            Interval.const(len(text)),
-                            may_null=False,
-                            may_nonnull=True,
-                            elem_iv=elements,
-                            is_ref=True,
-                        )
-                    case _:
-                        if v is None:
-                            va = Val.null()
-                        elif isinstance(v, (bool, int)):
-                            va = Val(Interval.const(int(v)))
-                        else:
-                            va = Val.reference()
-                out.append((pc + 1, state.push(va)))
+                out.append(self._step_push(pc, state, t, v))
 
             case jvm.Load(index=i):
                 out.append((pc + 1, state.push(replace(state.load(i), src=i))))
@@ -782,11 +808,11 @@ class UnboundedIntervalAnalysis:
                 [val], after = state.pop(1)
                 match to:
                     case jvm.Short():
-                        target = SHORT
+                        target = SHORT_IV
                     case jvm.Byte():
-                        target = BYTE
+                        target = BYTE_IV
                     case jvm.Char():
-                        target = CHAR
+                        target = CHAR_IV
                     case _:
                         target = Interval.top()
                 iv = cast_interval(val.iv, target)
@@ -834,7 +860,7 @@ class UnboundedIntervalAnalysis:
                     (
                         pc + 1,
                         state.push(
-                            Val.reference()
+                            _ref_val(Interval.top(), may_null=False)
                         ),
                     )
                 )
@@ -928,7 +954,7 @@ class UnboundedIntervalAnalysis:
                     Interval.nonneg(),
                     may_null=False,
                     may_nonnull=True,
-                    elem_iv=CHAR,
+                    elem_iv=CHAR_IV,
                     is_ref=True,
                 )
                 out.append((pc + 1, after if returns_void else after.push(ret_val)))
@@ -953,64 +979,7 @@ class UnboundedIntervalAnalysis:
                 | jvm.InvokeSpecial(method=m)
                 | jvm.InvokeInterface(method=m)
             ):
-                nargs = len(m.extension.params) + 1
-                args, after = state.pop(nargs)
-                # A String cannot change, but getChars writes into a char[].
-                if m.classname.dotted() == STRING:
-                    after = after.forget_elements(args[1:])
-                else:
-                    after = after.forget_elements(args)
-                recv_arg = args[0]
-                if recv_arg.may_null:
-                    out.append("null pointer")
-                if recv_arg.may_nonnull:
-                    returns_void = m.extension.return_type is None
-                    after_any_result = after if returns_void else after.push(Val.top())
-                    classname_str = m.classname.dotted()
-                    method_name = m.extension.name
-
-                    if classname_str == STRING:
-                        match method_name:
-                            case "equals":
-                                out.append((pc + 1, after.push(Val(Interval(0, 1)))))
-                            case "length":
-                                size = Val(length(recv_arg), len_of=recv_arg.src)
-                                out.append((pc + 1, after.push(size)))
-                            case "charAt":
-                                idx_arg = args[1]
-                                str_len = length(recv_arg)
-                                if idx_arg.iv.min < 0 or idx_arg.iv.max >= str_len.min:
-                                    out.append("out of bounds")
-                                letters = recv_arg.elem_iv
-                                ch_iv = CHAR if letters.is_bot() else letters
-                                out.append((pc + 1, after.push(Val(ch_iv))))
-                            case _:
-                                out.append((pc + 1, after_any_result))
-                    elif classname_str == "jpamb.utils.Smith":
-                        self.has_unknown_call = True
-                        if method_name in ("nextBoolean", "flip"):
-                            out.append((pc + 1, after.push(Val(Interval(0, 1)))))
-                        else:
-                            result = Val(Interval.top())
-                            after_result = after if returns_void else after.push(result)
-                            out.append((pc + 1, after_result))
-                    else:
-                        # The receiver is local 0 in the callee.
-                        recv = Val(
-                            recv_arg.iv,
-                            src=0,
-                            elem_iv=recv_arg.elem_iv,
-                            is_ref=True,
-                            piece_set=recv_arg.piece_set,
-                        )
-                        called = self._call(pc, m, [recv, *args[1:]], after)
-                        if called is not None:
-                            out.extend(called)
-                        else:
-                            if not is_safe_call(m):
-                                self.has_unknown_call = True
-                                self.outcomes.update(ALL_OUTCOMES)
-                            out.append((pc + 1, after_any_result))
+                out.extend(self._step_instance_call(pc, state, m))
 
             case _:
                 self.has_unknown_call = True
@@ -1026,6 +995,25 @@ class UnboundedIntervalAnalysis:
             if isinstance(prev, jvm.Load):
                 return str(prev.type).lower() not in INT_TYPES
         return False
+
+    def _store_refined(
+        self,
+        state: State,
+        val: Val,
+        refined_iv: Interval,
+        refined_out: Pieces,
+        bound: int | None,
+    ) -> State:
+        if val.src is None:
+            return state
+        return state.store(
+            val.src,
+            Val(
+                refined_iv, val.src, val.may_null, val.may_nonnull, val.elem_iv,
+                val.len_of, bound, val.alloc_id, val.is_ref, refined_out,
+            ),
+            preserve_bound=True,
+        )
 
     def _branch(
         self, pc: PC, after: State, a: Val, b: Val, cond, target: int
@@ -1116,40 +1104,8 @@ class UnboundedIntervalAnalysis:
                 else b.bounded_by
             )
 
-            if a.src is not None:
-                s = s.store(
-                    a.src,
-                    Val(
-                        ra_iv,
-                        a.src,
-                        a.may_null,
-                        a.may_nonnull,
-                        a.elem_iv,
-                        a.len_of,
-                        a_bound,
-                        a.alloc_id,
-                        a.is_ref,
-                        ra_pieces,
-                    ),
-                    preserve_bound=True,
-                )
-            if b.src is not None:
-                s = s.store(
-                    b.src,
-                    Val(
-                        rb_iv,
-                        b.src,
-                        b.may_null,
-                        b.may_nonnull,
-                        b.elem_iv,
-                        b.len_of,
-                        b_bound,
-                        b.alloc_id,
-                        b.is_ref,
-                        rb_pieces,
-                    ),
-                    preserve_bound=True,
-                )
+            s = self._store_refined(s, a, ra_iv, ra_pieces, a_bound)
+            s = self._store_refined(s, b, rb_iv, rb_pieces, b_bound)
             res.append((tgt_pc, s))
         return res
 
