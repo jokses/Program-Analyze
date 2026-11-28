@@ -1,6 +1,7 @@
 import bisect
 import functools
 import random
+import string
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -522,12 +523,12 @@ def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Inp
                 input.append(jpamb.case.Array(jvm.Int(), tuple(values)))
             case jvm.Array(contains=jvm.Char()):
                 length = rand.randint(0, MAX_FUZZ_LENGTH)
-                values = rand.choices("abcdefghijklmnopqrstuvwxyz", k=length)
+                values = rand.choices(string.ascii_lowercase, k=length)
                 input.append(jpamb.case.Array(jvm.Char(), tuple(values)))
             case jvm.Object(classname) if classname.dotted() == "java.lang.String":
-                random_str = "fuzz_" + "".join(rand.choices("abcdefghijklmnopqrstuvwxyz", k=5))
-
-                input.append(jpamb.case.String(value=random_str))
+                length = rand.randint(0, MAX_FUZZ_LENGTH)
+                letters = rand.choices(string.ascii_lowercase, k=length)
+                input.append(jpamb.case.String(value="".join(letters)))
 
 
             case a:
