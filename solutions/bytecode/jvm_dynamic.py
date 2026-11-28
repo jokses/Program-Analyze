@@ -222,18 +222,43 @@ def _extract_method_constants(method_id: jvm.AbsMethodID) -> tuple[list[int], li
     return sorted(int_consts), sorted(str_consts)
 
 
+def _interior_int_samples(int_consts: list[int]) -> list[int]:
+    anchors = sorted({0, *int_consts})
+    samples: list[int] = []
+    for lo, hi in zip(anchors, anchors[1:]):
+        span = hi - lo
+        if span <= 1:
+            continue
+        mid = lo + span // 2
+        if mid not in samples:
+            samples.append(mid)
+        if span >= 6:
+            for frac_num in (1, 2):
+                pt = lo + (span * frac_num) // 3
+                if pt not in samples:
+                    samples.append(pt)
+    return samples
+
+
 def _candidate_tokens_for_param(
     desc: str,
     int_consts: list[int],
     str_consts: list[str],
 ) -> list[str]:
     if desc == "I":
-        seeds: list[int] = [0, 1, -1, 2, -2, 10, -10]
+        interior = _interior_int_samples(int_consts)
+        boundary: list[int] = [0, 1, -1, 2, -2, 10, -10]
         for c in int_consts:
-            for candidate in (c, c - 1, c + 1):
-                if candidate not in seeds:
-                    seeds.append(candidate)
-        return [str(v) for v in seeds[:16]]
+            for v in (c, c - 1, c + 1):
+                if v not in boundary:
+                    boundary.append(v)
+        merged: list[int] = []
+        for b_val, i_val in itertools.zip_longest(boundary, interior):
+            if b_val is not None and b_val not in merged:
+                merged.append(b_val)
+            if i_val is not None and i_val not in merged:
+                merged.append(i_val)
+        return [str(v) for v in merged[:16]]
 
     if desc == "Z":
         return ["true", "false"]
@@ -257,6 +282,9 @@ def _candidate_tokens_for_param(
         if int_consts:
             sample = ", ".join(str(v) for v in int_consts[:4])
             arrays.append(f"[I: {sample}]")
+            mid_vals = _interior_int_samples(int_consts)
+            if mid_vals:
+                arrays.append(f"[I: {', '.join(str(v) for v in mid_vals[:3])}]")
         return arrays
 
     if desc == "[C":
@@ -304,6 +332,20 @@ def _generate_candidate_input_strings(method_id: jvm.AbsMethodID, limit: int = 2
     per_param = [_candidate_tokens_for_param(p, int_consts, str_consts) for p in param_descs]
     candidates: list[str] = []
     seen: set[str] = set()
+
+    max_len = max((len(opts) for opts in per_param), default=0)
+    for step in range(max_len):
+        for p_idx in range(len(per_param)):
+            combo = tuple(
+                opts[(step + (idx if idx == p_idx else 0)) % len(opts)]
+                for idx, opts in enumerate(per_param)
+            )
+            formatted = f"({', '.join(combo)})"
+            if formatted not in seen:
+                seen.add(formatted)
+                candidates.append(formatted)
+                if len(candidates) >= limit:
+                    return candidates
 
     for combo in itertools.product(*per_param):
         formatted = f"({', '.join(combo)})"
@@ -522,17 +564,17 @@ def _format_outcome_predictions_with_strength(
     total_runs: int,
     timed_out: bool,
 ) -> list[str]:
+    observed_any = {k for k, v in outcome_counts.items() if v > 0}
+    multi_outcome = len(observed_any) > 1
     lines: list[str] = []
     for outcome in _JPAMB_OUTCOMES:
         count = outcome_counts.get(outcome, 0)
         if outcome == "*":
-            pct = 75 if (timed_out or count > 0) else 50
-        elif count > 0 and outcome in _EXCEPTION_OUTCOMES:
-            pct = 85
-        elif count > 0 and outcome == "ok":
-            pct = 90 if total_runs > 0 else 80
+            pct = 75 if (timed_out or count > 0) else 25
+        elif count > 0:
+            pct = 75 if multi_outcome else (85 if outcome in _EXCEPTION_OUTCOMES else 90)
         else:
-            pct = 50
+            pct = 35 if total_runs > 0 else 50
         lines.append(f"{outcome};{pct}%")
     return lines
 
