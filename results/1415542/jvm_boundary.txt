@@ -1,0 +1,3 @@
+inputs run on the JVM 3806 | same outcome 3539 | over our limits 267 | different 0
+no outcome from the JVM, java.lang.RuntimeException: Unexpected: 82, like '(111)'
+divisors 2219 | outside the bound 0

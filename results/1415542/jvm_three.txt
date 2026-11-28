@@ -1,0 +1,4 @@
+inputs run on the JVM 2760 | same outcome 2568 | over our limits 192 | different 0
+no outcome from the JVM, jpamb cannot read the input back: 1, like "([C:'h', ''', '\x00', '\x00', '\x00'])"
+no outcome from the JVM, java.lang.RuntimeException: Unexpected: 26, like '(126)'
+divisors 1122 | outside the bound 0

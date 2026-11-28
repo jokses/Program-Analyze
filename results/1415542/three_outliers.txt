@@ -1,0 +1,42 @@
+methods 122 rows 3660
+methods left out because they crash 23
+  jpamb.cases.Arrays.arraySometimesNull:(I)V: instruction 1001.0 runs [1001, 1001], range 9.0 runs [6, 25]
+  jpamb.cases.Arrays.binarySearch:(I)V: instruction 1005.0 runs [1005, 1005], range 1010.5 runs [1010, 1020]
+  jpamb.cases.Calls.callsAssertIf:(Z)V: instruction 1004.5 runs [1003, 1008], range 3.0 runs [3, 10]
+  jpamb.cases.MagicConstants.unreachableRange:(I)V: instruction 1012.0 runs [1005, 1019], range 26.5 runs [16, 41]
+  jpamb.cases.Simple.checkBeforeDivideByN2:(I)I: instruction 1003.0 runs [1003, 1003], range 1008.5 runs [1006, 1022]
+  jpamb.cases.Simple.multiError:(Z)I: instruction 1003.0 runs [1003, 1003], range 3.0 runs [3, 3]
+  jpamb.cases.Simple.nestedBranchDivision:(II)I: instruction 1032.0 runs [1007, 1152], range 1209.5 runs [1023, 1582]
+methods with parameters and unreachable code 7 median runs of instruction / range 38.18867924528302
+range stops earlier than instruction in 40 of 70 paired seeds, sign test p = 0.14
+range stops earlier than instruction in median runs on 4 of 7 methods, sign test p = 0.5
+methods where instruction reaches full coverage 74 of them where range reaches ranges the others never reach 22
+on those methods range reaches more ranges than instruction in 449 of 740 paired seeds, sign test p = 3.5e-09
+random stops {'no parameters': 220, 'no new coverage': 1000} | runs after the last new coverage 1000.0 | seeds missing a listed outcome 250 of 1220 | designed ranges missed 10 of 10
+  random seeds missing a listed outcome that hit the step limit 50
+  random CPU seconds per seed, median 0.118 total 872.9
+instruction stops {'no parameters': 130, 'full instruction coverage': 724, 'no new coverage': 366} | runs after the last new coverage 0.0 | seeds missing a listed outcome 283 of 1220 | designed ranges missed 10 of 10
+  instruction seeds missing a listed outcome that hit the step limit 4
+  instruction CPU seconds per seed, median 0.002 total 266.6
+range stops {'no parameters': 20, 'ranges meet the bound': 597, 'no new coverage': 603} | runs after the last new coverage 0.0 | seeds missing a listed outcome 198 of 1220 | designed ranges missed 9 of 10
+  range seeds missing a listed outcome that hit the step limit 6
+  range CPU seconds per seed, median 0.089 total 573.2
+range seeds that stopped on the bound and missed a listed outcome 0 of 597
+median share of the bound the range version covers 0.9354838709677419
+analysis share of the range CPU time 2.7%
+covered ranges outside the bound, all versions 0
+per method, unreachable code: instruction needs 15.9, 95% CI [1.26, 202], t-test over 7 methods p = 0.037, Shapiro-Wilk p = 0.058 times the runs of range
+  jpamb.cases.Arrays.arraySometimesNull:(I)V: chance range stops earlier 1.00, Mann-Whitney p = 6.2e-05, Holm p = 0.00033
+  jpamb.cases.Arrays.binarySearch:(I)V: chance range stops earlier 0.00, Mann-Whitney p = 5.5e-05, Holm p = 0.00033
+  jpamb.cases.Calls.callsAssertIf:(Z)V: chance range stops earlier 1.00, Mann-Whitney p = 0.00014, Holm p = 0.00042
+  jpamb.cases.MagicConstants.unreachableRange:(I)V: chance range stops earlier 1.00, Mann-Whitney p = 0.00018, Holm p = 0.00042
+  jpamb.cases.Simple.checkBeforeDivideByN2:(I)I: chance range stops earlier 0.00, Mann-Whitney p = 6.2e-05, Holm p = 0.00033
+  jpamb.cases.Simple.multiError:(Z)I: chance range stops earlier 1.00, Mann-Whitney p = 1.6e-05, Holm p = 0.00011
+  jpamb.cases.Simple.nestedBranchDivision:(II)I: chance range stops earlier 0.07, Mann-Whitney p = 0.0013, Holm p = 0.0013
+per method, unreachable code: range stops earlier with Holm p < 0.05 on 4 of 7 methods, later on 3
+per method, full instruction coverage: range covers 2.51, 95% CI [1.47, 3.55], t-test over 74 methods p = 8.1e-06, Shapiro-Wilk p = 4.7e-13 more ranges per run
+per method, full instruction coverage: range covers more on 48, as many on 22, fewer on 4 of 74 methods
+per method, full instruction coverage: range covers more with Holm p < 0.05 on 4 of 74 methods, fewer on 2
+per method, range needs 3.51, 95% CI [2.29, 5.37], t-test over 122 methods p = 4.3e-08, Shapiro-Wilk p = 1.3e-11 times the runs of instruction
+methods with a covered range outside the bound 0 of 122, 95% upper bound if none 2.43%
+methods with a range seed that stopped on the bound and missed a listed outcome 0 of 65, 95% upper bound if none 4.50%
