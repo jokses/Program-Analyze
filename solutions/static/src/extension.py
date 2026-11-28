@@ -44,27 +44,44 @@ def with_value(input: jpamb.case.Input, index: int, value: int) -> jpamb.case.In
     return jpamb.case.Input(tuple(values))
 
 
+# The method whose uncovered ranges are searched for, and the split of its ranges.
+@dataclass(frozen=True)
+class Search:
+    bc: jpamb.Bytecode
+    methodid: jvm.AbsMethodID
+    split: str
+    domain: str
+    oracle: RangeCoverageOracle
+    int_params: tuple[int, ...]
+
+
 # Runs the values one by one until one reaches the target.
-def try_values(bc, methodid, base, index, values, target, split) -> Attempt:
+def try_values(search: Search, base, index, values, target) -> Attempt:
     for runs, value in enumerate(values, start=1):
         input = with_value(base, index, value)
         trace = dynamic.run(
-            bc, methodid, input, max_steps=fuzzer.MAX_STEPS, split=split
+            search.bc,
+            search.methodid,
+            input,
+            max_steps=fuzzer.MAX_STEPS,
+            split=search.split,
         )
         if target in trace.ranges:
             return Attempt(runs, True)
     return Attempt(len(values), False)
 
 
-def backwards(bc, methodid, oracle, kept, int_params, target, split) -> Attempt:
+def backwards(search: Search, kept, target) -> Attempt:
     runs = 0
     for base in kept:
-        path = dynamic.run(bc, methodid, base, max_steps=fuzzer.MAX_STEPS).path
-        for index in int_params:
-            iv = oracle.analysis.solve_uncovered_range(target, path, index)
+        path = dynamic.run(
+            search.bc, search.methodid, base, max_steps=fuzzer.MAX_STEPS
+        ).path
+        for index in search.int_params:
+            iv = search.oracle.analysis.solve_uncovered_range(target, path, index)
             if iv.is_bot() or iv == Interval.top():
                 continue
-            tried = try_values(bc, methodid, base, index, candidates(iv), target, split)
+            tried = try_values(search, base, index, candidates(iv), target)
             runs += tried.runs
             if tried.reached:
                 return Attempt(runs, True)
@@ -79,15 +96,17 @@ HALVED: dict = {}
 # Halve the interval of the parameter and keep a half where the analysis still
 # allows the target. Their paper does not say which half to take when both allow it,
 # and we take the lower one.
-def halve(bc, methodid, index, target, split) -> Interval:
-    key = (methodid, index, target, split)
+def halve(search: Search, index, target) -> Interval:
+    key = (search.methodid, index, target, search.split, search.domain)
     if key not in HALVED:
         iv = Interval.top()
         while iv.max - iv.min >= CANDIDATES:
             middle = (iv.min + iv.max) // 2
             for half in (Interval(iv.min, middle), Interval(middle + 1, iv.max)):
-                analysis = UnboundedIntervalAnalysis(bc, methodid, None, {index: half})
-                if target in analysis.run().reachable_range_tuples(split=split):
+                analysis = UnboundedIntervalAnalysis(
+                    search.bc, search.methodid, None, {index: half}, search.domain
+                )
+                if target in analysis.run().reachable_range_tuples(split=search.split):
                     iv = half
                     break
             else:
@@ -96,68 +115,67 @@ def halve(bc, methodid, index, target, split) -> Interval:
     return HALVED[key]
 
 
-def binary_search(bc, methodid, base, int_params, target, split) -> Attempt:
+def binary_search(search: Search, base, target) -> Attempt:
     runs = 0
-    for index in int_params:
-        iv = halve(bc, methodid, index, target, split)
+    for index in search.int_params:
+        iv = halve(search, index, target)
         if iv.max - iv.min < CANDIDATES:
-            tried = try_values(bc, methodid, base, index, candidates(iv), target, split)
+            tried = try_values(search, base, index, candidates(iv), target)
             runs += tried.runs
             if tried.reached:
                 return Attempt(runs, True)
     return Attempt(runs, False)
 
 
-def encoded(target):
-    pc, position, low, high = target
-    return (pc.encode(), position, low, high)
-
-
-def extend(bc, methodid, oracle, seed, split, int_params):
-    bound = frozenset(oracle.upper_bound)
+def extend(search: Search, seed: int) -> list[dict]:
+    bound = frozenset(search.oracle.upper_bound)
     first = fuzzer.fuzz(
-        bc, methodid, version="range", seed=seed, split=split, bound=bound
+        search.bc,
+        search.methodid,
+        version=fuzzer.Version.RANGE,
+        seed=seed,
+        split=search.split,
+        bound=bound,
     )
     covered = set(first.ranges)
     targets = [
         target
         for target in sorted(bound, key=str)
-        if target[0].method == methodid and encoded(target) not in covered
+        if target[0].method == search.methodid
+        and fuzzer.encode_range(target) not in covered
     ]
     # With the same seed the longer run repeats the first run and then goes on.
     longer = fuzzer.fuzz(
-        bc,
-        methodid,
-        version="range",
+        search.bc,
+        search.methodid,
+        version=fuzzer.Version.RANGE,
         seed=seed,
-        split=split,
+        split=search.split,
         bound=bound,
         max_runs_since_new=LONGER,
-        goals=frozenset(targets),
+        targets=frozenset(targets),
     )
-    longer_runs = {tuple(goal[:4]): goal[4] - first.runs for goal in longer.goal_runs}
+    longer_runs = {
+        tuple(reached[:4]): reached[4] - first.runs for reached in longer.target_runs
+    }
     kept = [jpamb.case.Input.decode(code) for code in first.kept_inputs]
     rows = []
     for target in targets:
-        back = backwards(bc, methodid, oracle, kept, int_params, target, split)
-        binary = (
-            binary_search(bc, methodid, kept[0], int_params, target, split)
-            if kept
-            else Attempt(0, False)
-        )
+        back = backwards(search, kept, target)
+        binary = binary_search(search, kept[0], target) if kept else Attempt(0, False)
         combined = (
             back if back.reached else Attempt(back.runs + binary.runs, binary.reached)
         )
         rows.append(
             {
-                "method": methodid.encode(),
+                "method": search.methodid.encode(),
                 "seed": seed,
-                "split": split,
-                "target": encoded(target),
+                "split": search.split,
+                "target": fuzzer.encode_range(target),
                 "backwards": back.runs_if_reached(),
                 "binary_search": binary.runs_if_reached(),
                 "combined": combined.runs_if_reached(),
-                "longer": longer_runs.get(encoded(target)),
+                "longer": longer_runs.get(fuzzer.encode_range(target)),
             }
         )
     return rows
@@ -190,11 +208,12 @@ def main():
                 oracle = RangeCoverageOracle.build(
                     bc, methodid, args.split, args.domain
                 )
+                search = Search(
+                    bc, methodid, args.split, args.domain, oracle, tuple(int_params)
+                )
                 new_rows = []
                 for seed in range(args.seeds):
-                    new_rows += extend(
-                        bc, methodid, oracle, seed, args.split, int_params
-                    )
+                    new_rows += extend(search, seed)
             # A crash in one method becomes an error row and the next method runs.
             except Exception as error:
                 new_rows = [

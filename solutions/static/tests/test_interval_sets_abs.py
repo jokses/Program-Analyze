@@ -25,9 +25,8 @@ def test_refine_leaves_out_the_point_a_value_differs_from(opr, outcome):
 # Java rounds a division toward 0, so 1 / -2 == 0.
 def test_arithmetic_keeps_every_result_of_a_division_by_pieces_around_zero():
     [value] = of((1, 1)).arithmetic(of((-2, -1), (1, 2)), jvm.BinaryOpr.Div)
-    assert all(
-        any(piece.min <= x <= piece.max for piece in value.pieces) for x in (-1, 0, 1)
-    )
+    for java in (-1, 0, 1):
+        assert any(piece.min <= java <= piece.max for piece in value.pieces)
 
 
 # i = i + 1 in a loop grows forever without widening.

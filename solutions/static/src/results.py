@@ -7,7 +7,7 @@ from collections import defaultdict
 import checks
 import extension
 import fuzzer
-from unbounded import UnboundedIntervalAnalysis
+from unbounded import DOMAINS, UnboundedIntervalAnalysis
 
 import jpamb
 import jvm
@@ -25,8 +25,8 @@ def split_and_domain(rows) -> tuple[str, str]:
 # A method has unreachable code when the analysis never reaches one of its
 # instructions or one of the case methods it calls. The analysis over-approximates
 # and such an instruction cannot run.
-def has_unreachable_code(bc, methodid) -> bool:
-    states = UnboundedIntervalAnalysis(bc, methodid).run().states
+def has_unreachable_code(bc, methodid, domain) -> bool:
+    states = UnboundedIntervalAnalysis(bc, methodid, domain=domain).run().states
     for method in fuzzer.methods_reached(bc, methodid):
         for offset in range(len(bc.getmethod(method).opcodes)):
             if jvm.state.PC(method, offset) not in states:
@@ -64,10 +64,10 @@ def rows_of(groups, version):
     ]
 
 
-def fuzzer_numbers(bc, rows):
+def fuzzer_numbers(bc, rows, domain):
     groups = defaultdict(list)
     for row in rows:
-        if row["stop_reason"] != "crash":
+        if row["stop_reason"] != fuzzer.Stop.CRASH:
             groups[(row["method"], row["version"])].append(row)
     methods = sorted({method for method, _ in groups})
     print("methods", len(methods), "rows", sum(len(runs) for runs in groups.values()))
@@ -77,12 +77,12 @@ def fuzzer_numbers(bc, rows):
         method
         for method in methods
         if jvm.AbsMethodID.decode(method).extension.params
-        and has_unreachable_code(bc, jvm.AbsMethodID.decode(method))
+        and has_unreachable_code(bc, jvm.AbsMethodID.decode(method), domain)
     ]
     ratios = []
     earlier = pairs = 0
     for method in unreachable:
-        seeds = paired(groups, method, "instruction", "range")
+        seeds = paired(groups, method, fuzzer.Version.INSTRUCTION, fuzzer.Version.RANGE)
         # A version with only crash rows has no pair.
         if not seeds:
             continue
@@ -118,21 +118,21 @@ def fuzzer_numbers(bc, rows):
         method
         for method in methods
         if any(
-            row["stop_reason"] == "full instruction coverage"
-            for row in groups[(method, "instruction")]
+            row["stop_reason"] == fuzzer.Stop.FULL_INSTRUCTION_COVERAGE
+            for row in groups[(method, fuzzer.Version.INSTRUCTION)]
         )
     ]
     only_range = 0
     for method in full:
         others = {
             tuple(covered)
-            for version in ("random", "instruction")
+            for version in (fuzzer.Version.RANDOM, fuzzer.Version.INSTRUCTION)
             for row in groups[(method, version)]
             for covered in row["ranges"]
         }
         ranges = {
             tuple(covered)
-            for row in groups[(method, "range")]
+            for row in groups[(method, fuzzer.Version.RANGE)]
             for covered in row["ranges"]
         }
         only_range += bool(ranges - others)
@@ -146,8 +146,10 @@ def fuzzer_numbers(bc, rows):
     # misses than the other way around.
     more = pairs = 0
     for method in full:
-        for instruction, range_row in paired(groups, method, "instruction", "range"):
-            by_instruction = {tuple(covered) for covered in instruction["ranges"]}
+        for instruction_row, range_row in paired(
+            groups, method, fuzzer.Version.INSTRUCTION, fuzzer.Version.RANGE
+        ):
+            by_instruction = {tuple(covered) for covered in instruction_row["ranges"]}
             by_range = {tuple(covered) for covered in range_row["ranges"]}
             more += len(by_range - by_instruction) > len(by_instruction - by_range)
             pairs += 1
@@ -162,7 +164,7 @@ def fuzzer_numbers(bc, rows):
 
     expected = checks.expected_outcomes()
     designed_ranges = json.loads(checks.DESIGNED_RANGES.read_text())
-    for version in fuzzer.VERSIONS:
+    for version in fuzzer.Version:
         version_rows = rows_of(groups, version)
         stops = defaultdict(int)
         for row in version_rows:
@@ -196,11 +198,9 @@ def fuzzer_numbers(bc, rows):
             len(designed_rows),
         )
 
-    range_rows = rows_of(groups, "range")
+    range_rows = rows_of(groups, fuzzer.Version.RANGE)
     # Stopping on the bound is only safe if no seed that did so missed an outcome.
-    on_bound = [
-        row for row in range_rows if row["stop_reason"] == "ranges meet the bound"
-    ]
+    on_bound = [row for row in range_rows if row["stop_reason"] == fuzzer.Stop.BOUND]
     print(
         "range seeds that stopped on the bound and missed a listed outcome",
         sum(bool(expected[row["method"]] - set(row["outcomes"])) for row in on_bound),
@@ -259,8 +259,10 @@ def main():
     suite, eff = jpamb.setup()
     bc = jpamb.Bytecode(suite, eff, {})
     runs = checks.read_rows(args.runs)
-    split_and_domain(runs)
-    fuzzer_numbers(bc, runs)
+    _, domain = split_and_domain(runs)
+    if domain not in DOMAINS:
+        parser.error(f"{args.runs} has no domain of fuzzer-with-bound: {domain!r}")
+    fuzzer_numbers(bc, runs, domain)
     if args.extension:
         rows = checks.read_rows(args.extension)
         split_and_domain(runs + rows)

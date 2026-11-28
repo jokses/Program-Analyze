@@ -4,6 +4,7 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
+import fuzzer
 from dynamic import comparisons_in_method, range_of, split_points
 
 import jpamb
@@ -43,10 +44,10 @@ def shown(designed, split) -> bool:
 
 
 def inside(covered, designed) -> bool:
-    site, operand, low, high = covered
+    site, position, low, high = covered
     return (
         site == f"{designed['method']}:{designed['pc']}"
-        and operand == designed["operand"]
+        and position == designed["operand"]
         and designed["low"] <= low
         and high <= designed["high"]
     )
@@ -72,7 +73,7 @@ def main():
     groups = defaultdict(list)
     crashes = defaultdict(int)
     for row in rows:
-        if row["stop_reason"] == "crash":
+        if row["stop_reason"] == fuzzer.Stop.CRASH:
             crashes[(row["method"], row["error"])] += 1
         else:
             # fuzzer writes an empty domain and no bound, so its rows stay apart from
@@ -81,7 +82,7 @@ def main():
             key = (row["method"], row["split"], domain, row["version"])
             groups[key].append(row)
     for (method, error), count in sorted(crashes.items()):
-        print("crash", method, count, "rows", error)
+        print(fuzzer.Stop.CRASH, method, count, "rows", error)
 
     print("method split domain version seeds runs seconds stops missed bound outside")
     for (method, split, domain, version), runs in sorted(groups.items()):
@@ -92,9 +93,9 @@ def main():
             for outcome in expected[method] - set(row["outcomes"]):
                 # A run that hit the step limit may have reached the outcome later.
                 missed[outcome + (" (with *)" if "*" in row["outcomes"] else "")] += 1
-        # Only the range version uses the bound.
+        uses_bound = version == fuzzer.Version.RANGE
         seconds = [
-            row["cpu_seconds"] + (row["analysis_seconds"] if version == "range" else 0)
+            row["cpu_seconds"] + (row["analysis_seconds"] if uses_bound else 0)
             for row in runs
         ]
         bound = "-"

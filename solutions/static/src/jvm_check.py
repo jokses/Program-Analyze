@@ -51,7 +51,7 @@ def main():
     )
     parser.add_argument("runs", help="the JSON lines file of fuzzer-with-bound")
     rows = checks.read_rows(parser.parse_args().runs)
-    rows = [row for row in rows if row["stop_reason"] != "crash"]
+    rows = [row for row in rows if row["stop_reason"] != fuzzer.Stop.CRASH]
     suite, eff = jpamb.setup()
     bc = jpamb.Bytecode(suite, eff, {})
     kept = defaultdict(set)
@@ -75,19 +75,21 @@ def main():
                 continue
             ours = dynamic.run(bc, methodid, input, max_steps=fuzzer.MAX_STEPS).outcome
             try:
-                run = jvm_agent.run_with_agent(methodid, input, timeout_s=JVM_TIMEOUT)
+                observation = jvm_agent.run_with_agent(
+                    methodid, input, timeout_seconds=JVM_TIMEOUT
+                )
             except subprocess.CalledProcessError as error:
                 refused[java_exception(error.stderr)].append(code)
                 continue
             # MAX_STEPS and MAX_ARRAY_SIZE stop our interpreter but not the JVM.
             if ours in ("*", "out of memory"):
                 our_limits += 1
-            elif ours == run.outcome:
+            elif ours == observation.outcome:
                 same += 1
             else:
-                differ.append((name, code, ours, run.outcome))
-            for (method, index, operand), values in run.values.items():
-                pc = divisor_pc(bc, method, index) if operand == 1 else None
+                differ.append((name, code, ours, observation.outcome))
+            for (method, index, position), values in observation.values.items():
+                pc = divisor_pc(bc, method, index) if position == 1 else None
                 if pc is None:
                     continue
                 for value in set(values):

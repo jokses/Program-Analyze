@@ -66,10 +66,10 @@ def test_solve_uncovered_range_undoes_the_loop_in_division_loop(bc):
     methodid = jvm.AbsMethodID.decode("jpamb.cases.Dependent.divisionLoop:(I)V")
     oracle = RangeCoverageOracle.build(bc, methodid, "three")
     input = jpamb.case.Input((jpamb.case.Int(7),))
-    run = dynamic.run(bc, methodid, input, max_steps=fuzzer.MAX_STEPS)
+    trace = dynamic.run(bc, methodid, input, max_steps=fuzzer.MAX_STEPS)
     # n == 32 at the assertion, after dividing n by 2 five times.
     target = (PC(methodid, 15), 0, 32, 32)
-    assert oracle.analysis.solve_uncovered_range(target, run.path) == Interval(
+    assert oracle.analysis.solve_uncovered_range(target, trace.path) == Interval(
         1024, 1055
     )
 

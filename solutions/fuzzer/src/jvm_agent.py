@@ -28,8 +28,8 @@ def parse_agent_values(text: str) -> dict[Operand, list[int]]:
     values = {}
     for line in lines[lines.index("VALUES") + 1 : lines.index("OUTCOMES")]:
         key, numbers = line.rsplit("=", 1)
-        method, index, operand = key.rsplit("#", 2)
-        values[(method, int(index), int(operand))] = [
+        method, index, position = key.rsplit("#", 2)
+        values[(method, int(index), int(position))] = [
             int(number) for number in numbers.split(",")
         ]
     return values
@@ -38,7 +38,7 @@ def parse_agent_values(text: str) -> dict[Operand, list[int]]:
 # jpamb.Runtime stops at the first exception so each JVM runs one input. A run that
 # does not end in time is *.
 def run_with_agent(
-    methodid: jvm.AbsMethodID, input: jpamb.case.Input, *, timeout_s: float
+    methodid: jvm.AbsMethodID, input: jpamb.case.Input, *, timeout_seconds: float
 ) -> AgentObservation:
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "agent.txt"
@@ -63,7 +63,11 @@ def run_with_agent(
         ]
         try:
             run = subprocess.run(
-                command, capture_output=True, text=True, timeout=timeout_s, check=True
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=True,
             )
         except subprocess.TimeoutExpired:
             return AgentObservation("*", {})

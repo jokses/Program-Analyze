@@ -110,8 +110,10 @@ def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) ->
 # when n != 0, is not in the bound. --domain picks the pieces once for the whole run.
 # IntervalOutliers cannot leave out a point inside an interval, and SignSet keeps
 # only the signs, as the course's sign analysis does next to its intervals.
+# The first domain is the default, as for --domain.
 DOMAINS = {"sets": IntervalSet, "outliers": IntervalOutliers, "signs": SignSet}
-Pieces = IntervalSet
+DEFAULT_DOMAIN = next(iter(DOMAINS))
+Pieces = DOMAINS[DEFAULT_DOMAIN]
 
 
 def pieces_from_interval(iv: Interval) -> Pieces:
@@ -281,22 +283,22 @@ class State(sexpr.AsSExpr):
         locs[idx] = value
         new_locs = tuple(
             replace(
-                x,
-                len_of=None if x.len_of == idx else x.len_of,
-                bounded_by=x.bounded_by
-                if preserve_bound or x.bounded_by != idx
+                entry,
+                len_of=None if entry.len_of == idx else entry.len_of,
+                bounded_by=entry.bounded_by
+                if preserve_bound or entry.bounded_by != idx
                 else None,
             )
-            for x in locs
+            for entry in locs
         )
         stack = tuple(
             replace(
-                x,
-                src=None if x.src == idx else x.src,
-                len_of=None if x.len_of == idx else x.len_of,
-                bounded_by=None if x.bounded_by == idx else x.bounded_by,
+                entry,
+                src=None if entry.src == idx else entry.src,
+                len_of=None if entry.len_of == idx else entry.len_of,
+                bounded_by=None if entry.bounded_by == idx else entry.bounded_by,
             )
-            for x in self.stack
+            for entry in self.stack
         )
         return State(new_locs, stack)
 
@@ -305,42 +307,42 @@ class State(sexpr.AsSExpr):
         # elements can be anything.
         arrays = [ref for ref in refs if ref.is_ref]
 
-        def forget(x: Val) -> Val:
-            return replace(x, elem_iv=Interval.top())
+        def forget(value: Val) -> Val:
+            return replace(value, elem_iv=Interval.top())
 
-        def passed(x: Val, index: int | None = None) -> bool:
+        def passed(value: Val, index: int | None = None) -> bool:
             return any(
-                (array.src is not None and array.src in (x.src, index))
-                or (array.alloc_id is not None and array.alloc_id == x.alloc_id)
+                (array.src is not None and array.src in (value.src, index))
+                or (array.alloc_id is not None and array.alloc_id == value.alloc_id)
                 for array in arrays
             )
 
         return State(
-            tuple(forget(x) if passed(x, i) else x for i, x in enumerate(self.locals)),
-            tuple(forget(x) if passed(x) else x for x in self.stack),
+            tuple(forget(value) if passed(value, i) else value for i, value in enumerate(self.locals)),
+            tuple(forget(value) if passed(value) else value for value in self.stack),
         )
 
     def update_array_elems(self, ref: Val, val_iv: Interval) -> State:
-        def update(x: Val) -> Val:
+        def update(value: Val) -> Val:
             return replace(
-                x,
+                value,
                 may_null=False,
                 may_nonnull=True,
-                elem_iv=x.elem_iv | val_iv,
+                elem_iv=value.elem_iv | val_iv,
                 is_ref=True,
             )
 
-        def same_array(x: Val) -> bool:
-            return (ref.src is not None and x.src == ref.src) or (
-                ref.alloc_id is not None and x.alloc_id == ref.alloc_id
+        def same_array(value: Val) -> bool:
+            return (ref.src is not None and value.src == ref.src) or (
+                ref.alloc_id is not None and value.alloc_id == ref.alloc_id
             )
 
         locs = list(self.locals)
         if ref.src is not None and ref.src < len(locs):
             locs[ref.src] = update(locs[ref.src])
         return State(
-            tuple(update(x) if same_array(x) else x for x in locs),
-            tuple(update(x) if same_array(x) else x for x in self.stack),
+            tuple(update(value) if same_array(value) else value for value in locs),
+            tuple(update(value) if same_array(value) else value for value in self.stack),
         )
 
 
@@ -351,7 +353,12 @@ class UnboundedIntervalAnalysis:
         entry_method: jvm.AbsMethodID,
         inputs: jpamb.Input | None = None,
         param_ivs: dict[int, Interval] | None = None,
+        domain: str = DEFAULT_DOMAIN,
     ):
+        # Val takes the type of its pieces from Pieces, so the analysis sets it for
+        # its domain before it builds any value.
+        global Pieces
+        Pieces = DOMAINS[domain]
         self.bc = bc
         self.entry_method = entry_method
         self.inputs = inputs
@@ -1169,11 +1176,9 @@ class RangeCoverageOracle:
         bc: jpamb.Bytecode,
         methodid: jvm.AbsMethodID,
         split: str = "three",
-        domain: str = "sets",
+        domain: str = DEFAULT_DOMAIN,
     ) -> RangeCoverageOracle:
-        global Pieces
-        Pieces = DOMAINS[domain]
-        analysis = UnboundedIntervalAnalysis(bc, methodid, None).run()
+        analysis = UnboundedIntervalAnalysis(bc, methodid, None, domain=domain).run()
         return cls(analysis, analysis.reachable_range_tuples(split=split))
 
 

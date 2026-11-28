@@ -5,13 +5,30 @@ import random
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
+from enum import StrEnum
 
 import dynamic
 
 import jpamb
 import jvm
 
-VERSIONS = ["random", "instruction", "range"]
+
+class Version(StrEnum):
+    RANDOM = "random"
+    INSTRUCTION = "instruction"
+    RANGE = "range"
+
+
+# Why a version stopped, or crash when the analysis or the interpreter failed.
+class Stop(StrEnum):
+    FULL_INSTRUCTION_COVERAGE = "full instruction coverage"
+    BOUND = "ranges meet the bound"
+    TARGETS = "targets reached"
+    NO_PARAMETERS = "no parameters"
+    NO_NEW_COVERAGE = "no new coverage"
+    MAX_RUNS = "max runs"
+    CRASH = "crash"
+
 
 MAX_RUNS = 100_000
 MAX_RUNS_SINCE_NEW = 1_000
@@ -67,8 +84,8 @@ class Result:
     # Ranges the fuzzer reached that the bound rules out. Any of them means the bound
     # is wrong.
     outside_bound: tuple[EncodedRange, ...] = ()
-    # The run that first reached each goal, for the goals that were reached.
-    goal_runs: tuple[tuple[str, int, int, int, int], ...] = ()
+    # The run that first reached each target, for the targets that were reached.
+    target_runs: tuple[tuple[str, int, int, int, int], ...] = ()
     error: str | None = None
 
 
@@ -76,12 +93,12 @@ def fuzz(
     bc: jpamb.Bytecode,
     methodid: jvm.AbsMethodID,
     *,
-    version: str,
+    version: Version,
     seed: int,
     split: str,
     bound: frozenset | None = None,
     max_runs_since_new: int = MAX_RUNS_SINCE_NEW,
-    goals: frozenset = frozenset(),
+    targets: frozenset = frozenset(),
 ) -> Result:
     # The same method, version and seed give the same inputs.
     rand = random.Random(f"{methodid.encode()}|{version}|{seed}")
@@ -106,12 +123,12 @@ def fuzz(
     outcomes = set()
     runs = 0
     last_new_run = 0
-    goal_runs = {}
+    target_runs = {}
     start = time.process_time()
     while True:
         if first_codes:
             code = first_codes.pop(0)
-        elif version == "random":
+        elif version == Version.RANDOM:
             code = None
         else:
             code = corpus.next()
@@ -125,32 +142,32 @@ def fuzz(
         outcomes.add(trace.outcome)
         instructions |= trace.instructions
         ranges |= trace.ranges
-        for goal in (goals - goal_runs.keys()) & trace.ranges:
-            goal_runs[goal] = runs
-        if version == "instruction":
+        for target in (targets - target_runs.keys()) & trace.ranges:
+            target_runs[target] = runs
+        if version == Version.INSTRUCTION:
             coverage = trace.instructions
         else:
             coverage = trace.instructions | trace.ranges
         if not coverage <= seen:
             last_new_run = runs
             seen |= coverage
-        if version != "random" and code is not None:
+        if version != Version.RANDOM and code is not None:
             corpus.add(code, coverage)
 
         covered = {pc for pc in instructions if pc.method in reached}
-        if version == "instruction" and len(covered) == all_instructions:
-            reason = "full instruction coverage"
-        elif version == "range" and bound is not None and bound <= ranges:
-            reason = "ranges meet the bound"
-        elif goals and len(goal_runs) == len(goals):
-            reason = "goals reached"
+        if version == Version.INSTRUCTION and len(covered) == all_instructions:
+            reason = Stop.FULL_INSTRUCTION_COVERAGE
+        elif version == Version.RANGE and bound is not None and bound <= ranges:
+            reason = Stop.BOUND
+        elif targets and len(target_runs) == len(targets):
+            reason = Stop.TARGETS
         elif not params:
             # Without parameters every run is the same.
-            reason = "no parameters"
+            reason = Stop.NO_PARAMETERS
         elif runs - last_new_run >= max_runs_since_new:
-            reason = "no new coverage"
+            reason = Stop.NO_NEW_COVERAGE
         elif runs >= MAX_RUNS:
-            reason = "max runs"
+            reason = Stop.MAX_RUNS
         else:
             continue
 
@@ -172,16 +189,21 @@ def fuzz(
             bound_size=None if bound is None else len(bound),
             bound_not_covered=None if bound is None else len(bound - ranges),
             outside_bound=() if bound is None else encode(ranges - bound),
-            goal_runs=tuple(
+            target_runs=tuple(
                 sorted(
-                    (pc.encode(), *rest, run) for (pc, *rest), run in goal_runs.items()
+                    (*encode_range(target), run) for target, run in target_runs.items()
                 )
             ),
         )
 
 
+def encode_range(range_) -> EncodedRange:
+    pc, *rest = range_
+    return (pc.encode(), *rest)
+
+
 def encode(ranges: set) -> tuple[EncodedRange, ...]:
-    return tuple(sorted((pc.encode(), *rest) for pc, *rest in ranges))
+    return tuple(sorted(map(encode_range, ranges)))
 
 
 def all_methods(suite: jpamb.Suite, *, eff: jpamb.Effect) -> list[jvm.AbsMethodID]:
@@ -217,8 +239,12 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
     parser = argparse.ArgumentParser(
         description="Fuzz JPAMB methods, one JSON row per method, version and seed."
     )
-    parser.add_argument("--versions", default=",".join(VERSIONS))
+    parser.add_argument("--versions", default=",".join(Version))
     args, bc, methods = parse_methods(parser, domains)
+    try:
+        versions = [Version(name) for name in args.versions.split(",")]
+    except ValueError:
+        parser.error(f"--versions takes {','.join(Version)}, got {args.versions}")
     domain = args.domain if domains else ""
 
     # Absolute menace of a loop composition as this would never ever be acceptable
@@ -235,7 +261,7 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
                 except Exception as error:
                     analysis_error = error
                 analysis_seconds = round(time.process_time() - start, 3)
-            for version in args.versions.split(","):
+            for version in versions:
                 for seed in range(args.seeds):
                     # When the analysis fails every version crashes, so all versions
                     # are compared on the same methods.
@@ -264,7 +290,7 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
                             seed,
                             split=args.split,
                             domain=domain,
-                            stop_reason="crash",
+                            stop_reason=Stop.CRASH,
                             error=repr(error),
                         )
                     out.write(json.dumps(asdict(result)) + "\n")
