@@ -1,10 +1,12 @@
 import argparse
 import json
 import math
+import statistics
 import sys
 from collections import defaultdict
 
 import checks
+import estimates
 import extension
 import fuzzer
 from unbounded import DOMAINS, UnboundedIntervalAnalysis
@@ -74,17 +76,25 @@ def group_runs(rows) -> dict[tuple[str, str], list[dict]]:
     return groups
 
 
-def unreachable_numbers(bc, groups, methods, domain):
-    # Every version stops after one run on a method without parameters.
+# The methods with parameters and unreachable code. Every version stops after one
+# run on a method without parameters, so those are left out.
+def unreachable_methods(bc, methods, domain) -> list[str]:
     unreachable = []
     for method in methods:
         methodid = jvm.AbsMethodID.decode(method)
         if methodid.extension.params and has_unreachable_code(bc, methodid, domain):
             unreachable.append(method)
+    return unreachable
+
+
+def unreachable_numbers(bc, groups, methods, domain) -> list[str]:
+    unreachable = unreachable_methods(bc, methods, domain)
     ratios = []
     earlier = pair_count = 0
     # The same test with one observation per method: its median runs.
     earlier_methods = 0
+    # The methods with runs of both versions, for the estimates per method.
+    compared = []
     for method in unreachable:
         seed_pairs = paired(groups, method)
         # A version with only crash rows has no pair.
@@ -96,6 +106,7 @@ def unreachable_numbers(bc, groups, methods, domain):
         range_median = checks.median(range_runs)
         ratios.append(instruction_median / range_median)
         earlier_methods += range_median < instruction_median
+        compared.append(method)
         for by_instruction, by_range in zip(instruction_runs, range_runs):
             earlier += by_range < by_instruction
         pair_count += len(seed_pairs)
@@ -126,6 +137,7 @@ def unreachable_numbers(bc, groups, methods, domain):
         "methods, sign test p =",
         f"{sign_test(earlier_methods, len(ratios)):.2g}",
     )
+    return compared
 
 
 def reaches_full_coverage(groups, method) -> bool:
@@ -134,7 +146,7 @@ def reaches_full_coverage(groups, method) -> bool:
     return fuzzer.Stop.FULL_INSTRUCTION_COVERAGE in stops
 
 
-def full_coverage_numbers(groups, methods):
+def full_coverage_numbers(groups, methods) -> list[str]:
     full = [method for method in methods if reaches_full_coverage(groups, method)]
     only_range = 0
     for method in full:
@@ -166,6 +178,7 @@ def full_coverage_numbers(groups, methods):
         "paired seeds, sign test p =",
         f"{sign_test(more, pair_count):.2g}",
     )
+    return full
 
 
 def version_numbers(groups, expected):
@@ -249,11 +262,105 @@ def fuzzer_numbers(bc, rows, domain):
     print("methods", len(methods), "rows", sum(len(runs) for runs in groups.values()))
     crashed = {row["method"] for row in rows if row["stop_reason"] == fuzzer.Stop.CRASH}
     print("methods left out because they crash", len(crashed - set(methods)))
-    unreachable_numbers(bc, groups, methods, domain)
-    full_coverage_numbers(groups, methods)
+    unreachable = unreachable_numbers(bc, groups, methods, domain)
+    full = full_coverage_numbers(groups, methods)
     expected = checks.expected_outcomes()
     version_numbers(groups, expected)
     bound_numbers(groups, expected)
+    method_numbers(groups, methods, unreachable, full, expected)
+
+
+def interval_text(estimate: estimates.Estimate, scale) -> str:
+    return (
+        f"{scale(estimate.mean):.3g}, 95% CI [{scale(estimate.low):.3g},"
+        f" {scale(estimate.high):.3g}], t-test over {estimate.methods} methods"
+        f" p = {estimate.p_value:.2g}, Shapiro-Wilk p = {estimate.normality_p:.2g}"
+    )
+
+
+def ratio(log10_value: float) -> float:
+    return 10**log10_value
+
+
+def unchanged(value: float) -> float:
+    return value
+
+
+# The methods where the first version's values are below the second's, and above,
+# by Mann-Whitney with Holm's correction over the methods of the claim.
+def holm_counts(comparisons) -> tuple[int, int]:
+    significant = [comparison for comparison in comparisons if comparison.holm_p < 0.05]
+    below = sum(comparison.chance_below > 0.5 for comparison in significant)
+    return below, len(significant) - below
+
+
+# The same claims with the method as the unit: an estimate with its interval over
+# the methods, and a test per method that needs no distribution.
+def method_numbers(groups, methods, unreachable, full, expected):
+    runs, runs_per_method = estimates.fewer_runs(groups, unreachable)
+    print(
+        "per method, unreachable code: instruction needs",
+        interval_text(runs, ratio),
+        "times the runs of range",
+    )
+    for comparison in runs_per_method:
+        print(
+            f"  {comparison.method}: chance range stops earlier"
+            f" {comparison.chance_below:.2f}, Mann-Whitney p ="
+            f" {comparison.p_value:.2g}, Holm p = {comparison.holm_p:.2g}"
+        )
+    earlier, later = holm_counts(runs_per_method)
+    print(
+        f"per method, unreachable code: range stops earlier with Holm p < 0.05 on"
+        f" {earlier} of {len(runs_per_method)} methods, later on {later}"
+    )
+
+    ranges, ranges_per_method = estimates.more_ranges(groups, full)
+    print(
+        "per method, full instruction coverage: range covers",
+        interval_text(ranges, unchanged),
+        "more ranges per run",
+    )
+    differences = [
+        statistics.fmean(comparison.second) - statistics.fmean(comparison.first)
+        for comparison in ranges_per_method
+    ]
+    print(
+        f"per method, full instruction coverage: range covers more on"
+        f" {sum(difference > 0 for difference in differences)}, as many on"
+        f" {sum(difference == 0 for difference in differences)}, fewer on"
+        f" {sum(difference < 0 for difference in differences)} of"
+        f" {len(differences)} methods"
+    )
+    more, fewer = holm_counts(ranges_per_method)
+    print(
+        f"per method, full instruction coverage: range covers more with Holm"
+        f" p < 0.05 on {more} of {len(ranges_per_method)} methods, fewer on {fewer}"
+    )
+
+    cost = estimates.more_runs(groups, methods)
+    cost_text = interval_text(cost, ratio)
+    print("per method, range needs", cost_text, "times the runs of instruction")
+
+    outside = {
+        method
+        for (method, _), rows in groups.items()
+        if any(row["outside_bound"] for row in rows)
+    }
+    print(
+        f"methods with a covered range outside the bound {len(outside)} of"
+        f" {len(methods)}, 95% upper bound if none"
+        f" {100 * estimates.zero_upper_bound(len(methods)):.2f}%"
+    )
+    range_rows = rows_of(groups, fuzzer.Version.RANGE)
+    on_bound = [row for row in range_rows if row["stop_reason"] == fuzzer.Stop.BOUND]
+    stopped = {row["method"] for row in on_bound}
+    missed = {row["method"] for row in on_bound if misses_an_outcome(row, expected)}
+    print(
+        f"methods with a range seed that stopped on the bound and missed a listed"
+        f" outcome {len(missed)} of {len(stopped)}, 95% upper bound if none"
+        f" {100 * estimates.zero_upper_bound(len(stopped)):.2f}%"
+    )
 
 
 # For each designed range left uncovered, like n == 32 in divisionLoop, in how many
