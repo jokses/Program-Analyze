@@ -1,6 +1,6 @@
 # Fuzzer
 
-We followed the course notes on [selecting input](https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:selecting-inputs). `fuzz_input` makes random inputs, the constants in the method are used as a dictionary and `Corpus` keeps the inputs that give new coverage. `Draw` and `fuzz_type` are from Christian's [extra-fuzzer commit](https://github.com/kalhauge/jpamb/commit/7a7a36af695aae8638be4983e291d456d4eff277).
+We followed the course notes on [selecting input](https://courses.compute.dtu.dk/02242/topics/dynamic-analysis.html#sec:selecting-inputs). `fuzz_input` makes random inputs, the constants in the method are used as a dictionary and `Corpus` keeps the inputs that give new coverage. `Draw` and `fuzz_type` are from JPAMB's [extra-fuzzer commit](https://github.com/kalhauge/jpamb/commit/7a7a36af695aae8638be4983e291d456d4eff277).
 
 The fuzzer has three versions, `random`, `instruction` and `range`. All of them first try the empty input, the constants in the method and its split points. `random` then makes random inputs. `instruction` mutates the inputs that ran a new instruction and `range` the inputs that ran a new instruction or hit a new range. They stop after 1,000 runs with nothing new or 100,000 runs in total. `instruction` also stops when it has run every instruction.
 
@@ -68,7 +68,7 @@ printf 'Premain-Class: solutions.bytecode.InstrumentationAgent\n' > build/jvm/ma
 The interpreter gets 213 of 266 on JPAMB 0.10. The 53 cases it fails are in `Randomness` with `Smith` inputs, and in `Strings`, `CWE470` and `CWE502` with string methods like `startsWith`, `invokedynamic` and casts. We do not support those.
 
 - We record ranges at comparisons, `idiv`, `irem` and array indices.
-- The split points are 0 and the constants the method compares with. We get these from Adriana's syntactic analysis. `--split three` is the default and gives < c, = c and > c. `--split boundary` also gives c-1 and c+1 their own range.
+- The split points are 0 and the constants the method compares with. We get these from the syntactic analysis in `solutions/syntactic`. `--split three` is the default and gives < c, = c and > c. `--split boundary` also gives c-1 and c+1 their own range.
 - `instruction` only counts new instructions as new coverage and the other two also count new ranges.
 - Full coverage means the instructions of the fuzzed method, of the case methods it calls and of the case methods those call.
 - Arrays and strings get at most 8 elements, and a run stops with `*` after 1,000 steps.
