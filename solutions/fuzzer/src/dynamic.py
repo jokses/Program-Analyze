@@ -2,7 +2,6 @@ import bisect
 import functools
 import random
 import string
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -11,8 +10,6 @@ from syntactic_constants import constants_for_method_id
 import jpamb
 import jvm
 import jvm.state as jvmc
-
-DEBUG = False
 
 MAX_ARRAY_SIZE = 1_000_000
 
@@ -93,12 +90,8 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
     pc = frame.pc
     opr = bc[pc]
     output = state
-    if DEBUG:
-        print(f"Stepping {pc}:\n > {opr}", file=sys.stderr)
     match opr:
         case jvm.Push(type=t, value=v):
-            if DEBUG:
-                print(f"---value   {t}: {t!r}", file=sys.stderr)
             match t:
                 case jvm.Int():
                     frame.stack.push(jvmc.StackInt(v))
@@ -114,7 +107,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                     frame.stack.push(str_ref)
 
                 case _:
-                    raise NotImplementedError(f"expected int, but got {jvm.Int()} {t} {t!r}")
+                    raise NotImplementedError(
+                        f"Push is not implemented for the type {t!r}"
+                    )
             frame.pc += 1
 
         case jvm.Ifz(offset=off, condition=cond, target=targ):
@@ -132,9 +127,6 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
         case jvm.InvokeStatic(offset=off, method=method_id):
             target_method = bc.getmethod(method_id)
-            if DEBUG:
-                print(f" Calling method: {method_id.extension.name}", file=sys.stderr)
-
             new_frame = jvmc.Frame.from_method(target_method)
             num_params = len(method_id.extension.params._elements)
 
@@ -152,9 +144,6 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
         case jvm.NewArray(offset=off, type=t, dim=d):
             count = frame.stack.pop().value
-            if DEBUG:
-                print(f" value ----  {t} {count}", file=sys.stderr)
-
             # JPAMB has no outcome for NegativeArraySizeException.
             if count < 0:
                 return pc, "negative array size"
@@ -168,7 +157,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                     frame.stack.push(array_ref)
                     frame.pc += 1
                 case _:
-                    raise NotImplementedError(f"expected int, but got {jvm.Int()}  {t!r}")
+                    raise NotImplementedError(
+                        f"NewArray is not implemented for the type {t!r}"
+                    )
 
         case jvm.ArrayStore(offset=off, type=t):
             value_element = frame.stack.pop()
@@ -193,12 +184,6 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             classname_str = method_id.classname.dotted()
             method_name = method_id.extension.name
 
-            if DEBUG:
-                print(
-                    f" Calling virtual method: {classname_str}.{method_name}",
-                    file=sys.stderr,
-                )
-
             num_params = len(method_id.extension.params._elements)
 
             args = []
@@ -208,7 +193,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
             object_ref = frame.stack.pop()
 
-            # java.lang.String has no bytecode in the suite, so its methods run here in Python.
+            # java.lang.String has no bytecode here, so its methods run in Python.
             if classname_str == "java.lang.String":
                 heap_string_obj = state.heap[object_ref]
                 raw_string = heap_string_obj.content
@@ -231,7 +216,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                         frame.stack.push(jvmc.StackInt(ord(raw_string[idx])))
 
                     case _:
-                        raise NotImplementedError(f"The String method {method_name} is not implemented in InvokeVirtual")
+                        raise NotImplementedError(
+                            f"The String method {method_name} is not implemented"
+                        )
 
                 frame.pc += 1
                 return pc, state
@@ -250,7 +237,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
         case jvm.Negate(offset=off, type=t):
             value_element = frame.stack.pop()
-            assert isinstance(value_element, jvmc.StackInt), f"expected int, but got {value_element}"
+            assert isinstance(value_element, jvmc.StackInt), (
+                f"expected int, but got {value_element}"
+            )
 
             raw_value = value_element.value
             negated_result = to_int(-raw_value)
@@ -259,7 +248,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 case jvm.Int():
                     frame.stack.push(jvmc.StackInt(value=negated_result))
                 case _:
-                    raise NotImplementedError(f"Negate is not implemented for the type {t!r}")
+                    raise NotImplementedError(
+                        f"Negate is not implemented for the type {t!r}"
+                    )
 
             frame.pc += 1
 
@@ -295,7 +286,9 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 case jvm.Int() | jvm.Char():
                     frame.stack.push(jvm.state.StackInt(value=raw_value))
                 case _:
-                    raise NotImplementedError(f"ArrayLoad is not implemented for the type {t!r}")
+                    raise NotImplementedError(
+                        f"ArrayLoad is not implemented for the type {t!r}"
+                    )
 
             frame.pc += 1
 
@@ -437,7 +430,8 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
         case jvm.New(offset=off) as new_opr:
             classname_obj = new_opr.classname
-            dummy_error_obj = jvmc.HeapString(content=f"Exception: {classname_obj.dotted()}")
+            message = f"Exception: {classname_obj.dotted()}"
+            dummy_error_obj = jvmc.HeapString(content=message)
             error_ref = state.heap.new(dummy_error_obj)
             frame.stack.push(error_ref)
             frame.pc += 1
@@ -508,8 +502,8 @@ def interpret():
 def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Input:
     input = []
     # 1. come up with possible inputs
-    for p in methodid.extension.params:
-        match p:
+    for param in methodid.extension.params:
+        match param:
             case jvm.Int():
                 input.append(jpamb.case.Int(rand.randint(-(1 << 31), (1 << 31) - 1)))
             case jvm.Boolean():
@@ -529,11 +523,9 @@ def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Inp
                 length = rand.randint(0, MAX_FUZZ_LENGTH)
                 letters = rand.choices(string.ascii_lowercase, k=length)
                 input.append(jpamb.case.String(value="".join(letters)))
-
-
-            case a:
+            case _:
                 raise NotImplementedError(
-                    f"Don't know how to create random values for {p}"
+                    f"fuzz_input is not implemented for the type {param!r}"
                 )
 
     return jpamb.case.Input(input)

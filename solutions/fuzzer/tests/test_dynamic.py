@@ -19,7 +19,7 @@ INT_MAX = 2**31 - 1
 
 
 @pytest.mark.parametrize(
-    "operator, left, right, expected",
+    ("operator", "left", "right", "expected"),
     [
         (jvm.BinaryOpr.Div, -7, 2, -3),
         (jvm.BinaryOpr.Div, INT_MIN, -1, INT_MIN),
@@ -33,7 +33,7 @@ def test_binary_follows_java(operator, left, right, expected):
 
 
 @pytest.mark.parametrize(
-    "operator, left, right, expected",
+    ("operator", "left", "right", "expected"),
     [
         (jvm.BitOpr.Shl, 1, 33, 2),
         (jvm.BitOpr.Shl, 1, 31, INT_MIN),
@@ -47,7 +47,7 @@ def test_bitwise_follows_java(operator, left, right, expected):
 
 
 @pytest.mark.parametrize(
-    "split, value, expected",
+    ("split", "value", "expected"),
     [
         ("three", 32, (32, 32)),
         ("three", 31, (1, 31)),
@@ -63,19 +63,18 @@ def test_range_of_splits_at_the_constants(split, value, expected):
     assert range_of(value, split_points({32}, split)) == expected
 
 
-def st_types():
-    return st.sampled_from(
-        [
-            jvm.Int(),
-            jvm.Boolean(),
-            jvm.Array(jvm.Int()),
-            jvm.Array(jvm.Char()),
-            jvm.Object(jvm.ClassName("java.lang.String")),
-        ]
-    )
+PARAMETER_TYPES = st.sampled_from(
+    [
+        jvm.Int(),
+        jvm.Boolean(),
+        jvm.Array(jvm.Int()),
+        jvm.Array(jvm.Char()),
+        jvm.Object(jvm.ClassName("java.lang.String")),
+    ]
+)
 
 
-@given(st.binary(), st_types())
+@given(st.binary(), PARAMETER_TYPES)
 def test_fuzz_type_gives_a_value_of_the_type(code: bytes, target: jvm.Type):
     value = fuzz_type(Draw(code), target)
 
@@ -83,7 +82,7 @@ def test_fuzz_type_gives_a_value_of_the_type(code: bytes, target: jvm.Type):
     assert value.type == target
 
 
-@given(st.integers(-(2**31), 2**31 - 1))
+@given(st.integers(INT_MIN, INT_MAX))
 def test_constant_code_reads_back_as_the_constant(constant: int):
     params = [jvm.Int(), jvm.Array(jvm.Int())]
     draw = Draw(constant_code(params, constant))

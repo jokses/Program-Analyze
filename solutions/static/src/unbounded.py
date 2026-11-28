@@ -25,7 +25,18 @@ import sexpr
 from jvm.state import PC
 
 INT_TYPES = {"int", "i", "boolean", "z", "char", "c", "short", "s", "byte", "b"}
-ALL_OUTCOMES = {"ok", "assertion error", "divide by zero", "null pointer", "out of bounds"}
+ALL_OUTCOMES = {
+    "ok",
+    "assertion error",
+    "divide by zero",
+    "null pointer",
+    "out of bounds",
+}
+STRING = "java.lang.String"
+# The values of Java's short, byte and char.
+SHORT = Interval(-(2**15), 2**15 - 1)
+BYTE = Interval(-(2**7), 2**7 - 1)
+CHAR = Interval(0, 2**16 - 1)
 
 
 class AnalysisError(Exception):
@@ -59,7 +70,9 @@ def load_syntactic_constants(method_id: str) -> MethodConstants | None:
     entry = syntactic_table().get(method_id)
     if entry is None:
         return None
-    return MethodConstants(frozenset(entry["constants"]), frozenset(entry["comparisons"]))
+    return MethodConstants(
+        frozenset(entry["constants"]), frozenset(entry["comparisons"])
+    )
 
 
 # A cast wraps a value that does not fit, like (short) 40000 == -25536. Only an
@@ -80,7 +93,9 @@ STR_TO_CMPOPR = {
 }
 
 
-def backward_arith_left(op: jvm.BinaryOpr, target: Interval, right: Interval) -> Interval:
+def backward_arith_left(
+    op: jvm.BinaryOpr, target: Interval, right: Interval
+) -> Interval:
     if target.is_bot() or right.is_bot():
         return Interval.bot()
     match op:
@@ -121,14 +136,14 @@ def pieces_from_interval(iv: Interval) -> Pieces:
 
 
 # A value is in both the interval and the pieces, so each one limits the other.
-def reduce_pair(iv: Interval, out: Pieces) -> tuple[Interval, Pieces]:
-    out = type(out).make(iv & piece for piece in out.pieces)
-    pieces = out.pieces
+def reduce_pair(iv: Interval, piece_set: Pieces) -> tuple[Interval, Pieces]:
+    piece_set = type(piece_set).make(iv & piece for piece in piece_set.pieces)
+    pieces = piece_set.pieces
     if not pieces:
-        return Interval.bot(), out
+        return Interval.bot(), piece_set
     low = min(piece.min for piece in pieces)
     high = max(piece.max for piece in pieces)
-    return Interval(low, high) & iv, out
+    return Interval(low, high) & iv, piece_set
 
 
 # The errors and the value of left op right on the pieces. The value is None when the
@@ -142,17 +157,29 @@ def pieces_arithmetic(
     return errors, next(iter(values), None)
 
 
-# -INT_MIN does not fit, and Java gives INT_MIN back.
+# -INT_MIN does not fit and Java gives INT_MIN back, so such an interval becomes
+# all ints.
 def negate_interval(iv: Interval) -> Interval:
     if iv.is_bot():
         return iv
     return wrap_or_top(-iv.max, -iv.min)
 
 
+# The smallest interval with every number in it, empty without numbers.
+def interval_of(numbers) -> Interval:
+    numbers = list(numbers)
+    return Interval(min(numbers), max(numbers)) if numbers else Interval.bot()
+
+
+# Methods by name, then their pcs in order.
+def pc_order(pc: PC) -> tuple[str, int]:
+    return (str(pc.method), pc.offset)
+
+
 # Each piece goes through the same function as the interval. Trying only some values
 # of a piece is not sound, like (byte) of [0, 300] reaching 127 in the middle.
-def map_pieces(out: Pieces, fn) -> Pieces:
-    return type(out).make(fn(piece) for piece in out.pieces)
+def map_pieces(piece_set: Pieces, fn) -> Pieces:
+    return type(piece_set).make(fn(piece) for piece in piece_set.pieces)
 
 
 @dataclass(frozen=True)
@@ -167,13 +194,15 @@ class Val:
     alloc_id: int | None = None
     is_ref: bool = False
     # None gives iv as one piece.
-    out: Pieces | None = None
+    piece_set: Pieces | None = None
 
     def __post_init__(self):
-        out = pieces_from_interval(self.iv) if self.out is None else self.out
-        iv, out = reduce_pair(self.iv, out)
+        piece_set = self.piece_set
+        if piece_set is None:
+            piece_set = pieces_from_interval(self.iv)
+        iv, piece_set = reduce_pair(self.iv, piece_set)
         object.__setattr__(self, "iv", iv)
-        object.__setattr__(self, "out", out)
+        object.__setattr__(self, "piece_set", piece_set)
 
     # Built when asked so the pieces come from the domain of the run.
     @classmethod
@@ -184,6 +213,15 @@ class Val:
     def top(cls) -> Val:
         return cls(Interval.top(), may_null=True)
 
+    @classmethod
+    def null(cls) -> Val:
+        return cls(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
+
+    # A reference that is not null, to an array or a string of any length.
+    @classmethod
+    def reference(cls) -> Val:
+        return cls(Interval.top(), is_ref=True)
+
     def join(
         self,
         other: Val,
@@ -192,29 +230,29 @@ class Val:
     ) -> Val:
         if narrow:
             iv = self.iv.narrow(other.iv)
-            out = self.out
+            piece_set = self.piece_set
             elem_iv = self.elem_iv.narrow(other.elem_iv)
         elif K is not None:
             k_set = set(K)
             iv = self.iv.widen(other.iv, k_set)
-            out = self.out.widen(other.out, k_set)
+            piece_set = self.piece_set.widen(other.piece_set, k_set)
             elem_iv = self.elem_iv.widen(other.elem_iv, k_set)
         else:
             iv = self.iv | other.iv
-            out = self.out | other.out
+            piece_set = self.piece_set | other.piece_set
             elem_iv = self.elem_iv | other.elem_iv
 
         return Val(
             iv=iv,
-            src=self.src if self.src == other.src else None,
+            src=same_or_none(self.src, other.src),
             may_null=self.may_null or other.may_null,
             may_nonnull=self.may_nonnull or other.may_nonnull,
             elem_iv=elem_iv,
-            len_of=self.len_of if self.len_of == other.len_of else None,
-            bounded_by=self.bounded_by if self.bounded_by == other.bounded_by else None,
-            alloc_id=self.alloc_id if self.alloc_id == other.alloc_id else None,
+            len_of=same_or_none(self.len_of, other.len_of),
+            bounded_by=same_or_none(self.bounded_by, other.bounded_by),
+            alloc_id=same_or_none(self.alloc_id, other.alloc_id),
             is_ref=self.is_ref or other.is_ref,
-            out=out,
+            piece_set=piece_set,
         )
 
     def __str__(self) -> str:
@@ -224,18 +262,46 @@ class Val:
         return f"{prefix}{self.iv}"
 
 
+# A value two joined states agree on, or None when they differ.
+def same_or_none(first: int | None, second: int | None) -> int | None:
+    return first if first == second else None
+
+
+# Two unknown (None) values do not count as equal.
+def known_equal(first: int | None, second: int | None) -> bool:
+    return first is not None and first == second
+
+
+# Whether the instructions are load n, push an int and a binary op, as in
+# n = n op c.
+def is_update_by_constant(load, push, binary, local: int) -> bool:
+    loads_local = isinstance(load, jvm.Load) and load.index == local
+    pushes_int = isinstance(push, jvm.Push) and isinstance(push.type, jvm.Int)
+    return loads_local and pushes_int and isinstance(binary, jvm.Binary)
+
+
 # The length of an array or a string.
 def length(ref: Val) -> Interval:
     return Interval.nonneg() if ref.iv.is_bot() else ref.iv & Interval.nonneg()
 
 
-# Adds "out of bounds" when idx can be outside ref, and says if it can be inside.
-def check_index(ref: Val, idx: Val, out: list) -> bool:
-    arr_len = length(ref)
-    in_bounds = ref.src is not None and idx.bounded_by == ref.src and idx.iv.min >= 0
-    if not in_bounds and (idx.iv.min < 0 or idx.iv.max >= arr_len.min):
-        out.append("out of bounds")
-    return arr_len.max > 0 and not (idx.iv & Interval(0, arr_len.max - 1)).is_bot()
+# Whether idx can be outside the array or string ref, and whether it can be inside.
+def check_index(ref: Val, idx: Val) -> tuple[bool, bool]:
+    array_length = length(ref)
+    # bounded_by is the local whose length the index was compared with.
+    proven_inside = known_equal(ref.src, idx.bounded_by) and idx.iv.min >= 0
+    can_be_outside = idx.iv.min < 0 or idx.iv.max >= array_length.min
+    indexes = Interval(0, array_length.max - 1)
+    can_be_inside = not (idx.iv & indexes).is_bot()
+    return can_be_outside and not proven_inside, can_be_inside
+
+
+# Two values are the same array when they come from the same local or the same `new`
+# instruction. slot is the local that holds value, for a value in the locals.
+def same_array(array: Val, value: Val, slot: int | None = None) -> bool:
+    same_local = known_equal(array.src, value.src) or known_equal(array.src, slot)
+    same_allocation = known_equal(array.alloc_id, value.alloc_id)
+    return same_local or same_allocation
 
 
 # Library calls that cannot fail or loop so they add no outcomes.
@@ -256,7 +322,9 @@ class State(sexpr.AsSExpr):
         narrow: bool = False,
     ) -> State:
         if len(self.stack) != len(other.stack):
-            raise AnalysisError(f"stack height mismatch: {len(self.stack)} vs {len(other.stack)}")
+            raise AnalysisError(
+                f"stack height mismatch: {len(self.stack)} vs {len(other.stack)}"
+            )
         n_loc = max(len(self.locals), len(other.locals))
         l1 = self.locals + (Val.bot(),) * (n_loc - len(self.locals))
         l2 = other.locals + (Val.bot(),) * (n_loc - len(other.locals))
@@ -307,43 +375,30 @@ class State(sexpr.AsSExpr):
         # elements can be anything.
         arrays = [ref for ref in refs if ref.is_ref]
 
-        def forget(value: Val) -> Val:
-            return replace(value, elem_iv=Interval.top())
+        def forgotten(value: Val, slot: int | None = None) -> Val:
+            if any(same_array(array, value, slot) for array in arrays):
+                return replace(value, elem_iv=Interval.top())
+            return value
 
-        def passed(value: Val, index: int | None = None) -> bool:
-            return any(
-                (array.src is not None and array.src in (value.src, index))
-                or (array.alloc_id is not None and array.alloc_id == value.alloc_id)
-                for array in arrays
-            )
-
-        return State(
-            tuple(forget(value) if passed(value, i) else value for i, value in enumerate(self.locals)),
-            tuple(forget(value) if passed(value) else value for value in self.stack),
-        )
+        locs = tuple(forgotten(value, slot) for slot, value in enumerate(self.locals))
+        stack = tuple(forgotten(value) for value in self.stack)
+        return State(locs, stack)
 
     def update_array_elems(self, ref: Val, val_iv: Interval) -> State:
-        def update(value: Val) -> Val:
-            return replace(
-                value,
-                may_null=False,
-                may_nonnull=True,
-                elem_iv=value.elem_iv | val_iv,
-                is_ref=True,
-            )
+        def updated(value: Val, slot: int | None = None) -> Val:
+            if same_array(ref, value, slot):
+                return replace(
+                    value,
+                    may_null=False,
+                    may_nonnull=True,
+                    elem_iv=value.elem_iv | val_iv,
+                    is_ref=True,
+                )
+            return value
 
-        def same_array(value: Val) -> bool:
-            return (ref.src is not None and value.src == ref.src) or (
-                ref.alloc_id is not None and value.alloc_id == ref.alloc_id
-            )
-
-        locs = list(self.locals)
-        if ref.src is not None and ref.src < len(locs):
-            locs[ref.src] = update(locs[ref.src])
-        return State(
-            tuple(update(value) if same_array(value) else value for value in locs),
-            tuple(update(value) if same_array(value) else value for value in self.stack),
-        )
+        locs = tuple(updated(value, slot) for slot, value in enumerate(self.locals))
+        stack = tuple(updated(value) for value in self.stack)
+        return State(locs, stack)
 
 
 class UnboundedIntervalAnalysis:
@@ -388,8 +443,8 @@ class UnboundedIntervalAnalysis:
             method = self.bc.getmethod(m)
             for opr in method.opcodes:
                 match opr:
-                    case jvm.Push(value=int() as v) if not isinstance(v, bool):
-                        ks |= {v - 1, v, v + 1}
+                    case jvm.Push(value=int() as value) if not isinstance(value, bool):
+                        ks |= {value - 1, value, value + 1}
                     case jvm.Incr(amount=a):
                         ks.add(a)
 
@@ -403,8 +458,8 @@ class UnboundedIntervalAnalysis:
             for idx, opr in enumerate(method.opcodes):
                 pc = PC(m, idx)
                 match opr:
-                    case jvm.If(target=t) | jvm.Ifz(target=t) | jvm.Goto(target=t):
-                        target = (pc % t).offset
+                    case jvm.If() | jvm.Ifz() | jvm.Goto():
+                        target = (pc % opr.target).offset
                         if target <= pc.offset:
                             hs.add(target)
             self.headers_cache[m] = hs
@@ -421,11 +476,11 @@ class UnboundedIntervalAnalysis:
                     case jvm.Int():
                         locs[i] = Val(Interval.top())
                     case jvm.Short():
-                        locs[i] = Val(Interval(-32768, 32767))
+                        locs[i] = Val(SHORT)
                     case jvm.Byte():
-                        locs[i] = Val(Interval(-128, 127))
+                        locs[i] = Val(BYTE)
                     case jvm.Char():
-                        locs[i] = Val(Interval(0, 65535))
+                        locs[i] = Val(CHAR)
                     case jvm.Boolean():
                         locs[i] = Val(Interval(0, 1))
                     case jvm.Array(contains=jvm.Char()):
@@ -433,15 +488,15 @@ class UnboundedIntervalAnalysis:
                             Interval.nonneg(),
                             may_null=True,
                             may_nonnull=True,
-                            elem_iv=Interval(0, 65535),
+                            elem_iv=CHAR,
                             is_ref=True,
                         )
-                    case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+                    case jvm.Object(classname) if classname.dotted() == STRING:
                         locs[i] = Val(
                             Interval.nonneg(),
                             may_null=True,
                             may_nonnull=True,
-                            elem_iv=Interval(0, 65535),
+                            elem_iv=CHAR,
                             is_ref=True,
                         )
                     case _:
@@ -461,39 +516,35 @@ class UnboundedIntervalAnalysis:
                         locs[i] = Val(Interval.const(int(v)))
                     case jpamb.case.Array(contains=jvm.Char(), values=vals):
                         ords = [ord(a) for a in vals]
-                        e_iv = Interval(min(ords), max(ords)) if ords else Interval.bot()
+                        elements = interval_of(ords)
                         locs[i] = Val(
                             Interval.const(len(vals)),
                             may_null=False,
                             may_nonnull=True,
-                            elem_iv=e_iv,
+                            elem_iv=elements,
                             is_ref=True,
                         )
                     case jpamb.case.Array(values=vals):
-                        e_iv = (
-                            Interval(min(int(v) for v in vals), max(int(v) for v in vals))
-                            if vals
-                            else Interval.bot()
-                        )
+                        elements = interval_of(int(v) for v in vals)
                         locs[i] = Val(
                             Interval.const(len(vals)),
                             may_null=False,
                             may_nonnull=True,
-                            elem_iv=e_iv,
+                            elem_iv=elements,
                             is_ref=True,
                         )
                     case jpamb.case.String(value=s):
                         ords = [ord(c) for c in s]
-                        e_iv = Interval(min(ords), max(ords)) if ords else Interval.bot()
+                        elements = interval_of(ords)
                         locs[i] = Val(
                             Interval.const(len(s)),
                             may_null=False,
                             may_nonnull=True,
-                            elem_iv=e_iv,
+                            elem_iv=elements,
                             is_ref=True,
                         )
                     case _:
-                        locs[i] = Val(Interval.top(), may_null=True, may_nonnull=True, is_ref=True)
+                        locs[i] = replace(Val.reference(), may_null=True)
 
         for i, iv in self.param_ivs.items():
             locs[i] = replace(locs[i], iv=locs[i].iv & iv)
@@ -503,7 +554,7 @@ class UnboundedIntervalAnalysis:
         entry_pc = PC(self.entry_method, 0)
         init_st = self._initial_state()
         self.states = {entry_pc: init_st}
-        work: list[tuple[str, int, PC]] = [(str(entry_pc.method), entry_pc.offset, entry_pc)]
+        work: list[tuple[str, int, PC]] = [(*pc_order(entry_pc), entry_pc)]
         queued: set[PC] = {entry_pc}
 
         # The fixpoint is widened with the constants K at loop heads.
@@ -533,19 +584,19 @@ class UnboundedIntervalAnalysis:
                         if succ_pc.offset in headers
                         else None
                     )
-                    new = old.join(succ_st, K, narrow=False)
+                    new = old.join(succ_st, K)
                     if new == old:
                         continue
                     self.states[succ_pc] = new
 
                 if succ_pc not in queued:
                     queued.add(succ_pc)
-                    heapq.heappush(work, (str(succ_pc.method), succ_pc.offset, succ_pc))
+                    heapq.heappush(work, (*pc_order(succ_pc), succ_pc))
 
         # Narrowing then takes back some of what widening added.
         for _ in range(2):
             incoming: dict[PC, State] = {entry_pc: init_st}
-            for pc in sorted(self.states.keys(), key=lambda p: (str(p.method), p.offset)):
+            for pc in sorted(self.states, key=pc_order):
                 st = self.states[pc]
                 for res in self.step(pc, st):
                     if isinstance(res, str):
@@ -553,7 +604,7 @@ class UnboundedIntervalAnalysis:
                         continue
                     succ_pc, succ_st = res
                     if succ_pc in incoming:
-                        incoming[succ_pc] = incoming[succ_pc].join(succ_st, narrow=False)
+                        incoming[succ_pc] = incoming[succ_pc].join(succ_st)
                     else:
                         incoming[succ_pc] = succ_st
 
@@ -608,7 +659,9 @@ class UnboundedIntervalAnalysis:
 
         return False
 
-    def _wake_callers(self, callee: jvm.AbsMethodID, ret_val: Val) -> list[tuple[PC, State]]:
+    def _wake_callers(
+        self, callee: jvm.AbsMethodID, ret_val: Val
+    ) -> list[tuple[PC, State]]:
         old_ret = self.return_vals.get(callee, Val.bot())
         joined_ret = old_ret.join(ret_val)
         if joined_ret == old_ret:
@@ -620,8 +673,9 @@ class UnboundedIntervalAnalysis:
             if caller_st is None:
                 continue
             opr = self.bc[call_pc]
-            nargs = len(callee.extension.params) + (0 if isinstance(opr, jvm.InvokeStatic) else 1)
-            args, after = caller_st.pop(nargs)
+            receiver_count = 0 if isinstance(opr, jvm.InvokeStatic) else 1
+            arg_count = len(callee.extension.params) + receiver_count
+            args, after = caller_st.pop(arg_count)
             woken.append((call_pc + 1, after.forget_elements(args).push(joined_ret)))
         return woken
 
@@ -655,25 +709,25 @@ class UnboundedIntervalAnalysis:
                     case jvm.Int():
                         va = Val(Interval.const(int(v)))
                     case jvm.Reference() | jvm.Array():
-                        va = Val(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
-                    case jvm.Object(classname) if classname.dotted() == "java.lang.String":
+                        va = Val.null()
+                    case jvm.Object(classname) if classname.dotted() == STRING:
                         text = str(v)
                         ords = [ord(char) for char in text]
-                        e_iv = Interval(min(ords), max(ords)) if ords else Interval.bot()
+                        elements = interval_of(ords)
                         va = Val(
                             Interval.const(len(text)),
                             may_null=False,
                             may_nonnull=True,
-                            elem_iv=e_iv,
+                            elem_iv=elements,
                             is_ref=True,
                         )
                     case _:
                         if v is None:
-                            va = Val(Interval.bot(), may_null=True, may_nonnull=False, is_ref=True)
+                            va = Val.null()
                         elif isinstance(v, (bool, int)):
                             va = Val(Interval.const(int(v)))
                         else:
-                            va = Val(Interval.top(), may_null=False, may_nonnull=True, is_ref=True)
+                            va = Val.reference()
                 out.append((pc + 1, state.push(va)))
 
             case jvm.Load(index=i):
@@ -685,13 +739,14 @@ class UnboundedIntervalAnalysis:
 
             case jvm.Incr(index=i, amount=a):
                 v = state.load(i)
-                _, inc_out = pieces_arithmetic(
-                    v.out, type(v.out).make([Interval.const(a)]), jvm.BinaryOpr.Add
+                step_pieces = type(v.piece_set).make([Interval.const(a)])
+                _, added_pieces = pieces_arithmetic(
+                    v.piece_set, step_pieces, jvm.BinaryOpr.Add
                 )
                 keep_bound = v.bounded_by if a <= 0 else None
                 for result in v.iv.arithmetic(Interval.const(a), jvm.BinaryOpr.Add):
                     if isinstance(result, Interval):
-                        new = Val(result, bounded_by=keep_bound, out=inc_out)
+                        new = Val(result, bounded_by=keep_bound, piece_set=added_pieces)
                         if not new.iv.is_bot():
                             out.append((pc + 1, state.store(i, new)))
 
@@ -710,40 +765,43 @@ class UnboundedIntervalAnalysis:
             case jvm.Negate():
                 [val], after = state.pop(1)
                 iv = negate_interval(val.iv)
-                neg_out = map_pieces(val.out, negate_interval)
-                out.append((pc + 1, after.push(Val(iv, out=neg_out))))
+                neg_pieces = map_pieces(val.piece_set, negate_interval)
+                out.append((pc + 1, after.push(Val(iv, piece_set=neg_pieces))))
 
             case jvm.Cast(to_=to):
                 [val], after = state.pop(1)
                 match to:
                     case jvm.Short():
-                        target = Interval(-32768, 32767)
+                        target = SHORT
                     case jvm.Byte():
-                        target = Interval(-128, 127)
+                        target = BYTE
                     case jvm.Char():
-                        target = Interval(0, 65535)
+                        target = CHAR
                     case _:
                         target = Interval.top()
                 iv = cast_interval(val.iv, target)
-                cast_out = map_pieces(
-                    val.out, lambda piece: cast_interval(piece, target)
+                cast_pieces = map_pieces(
+                    val.piece_set, lambda piece: cast_interval(piece, target)
                 )
-                out.append((pc + 1, after.push(Val(iv, out=cast_out))))
+                out.append((pc + 1, after.push(Val(iv, piece_set=cast_pieces))))
 
             case jvm.Binary(operant=op):
                 [a, b], after = state.pop(2)
                 results = a.iv.arithmetic(b.iv, op)
-                out_errors, value_out = pieces_arithmetic(a.out, b.out, op)
+                piece_errors, value_pieces = pieces_arithmetic(
+                    a.piece_set, b.piece_set, op
+                )
                 # An error needs both the interval and the pieces to allow it.
                 errors = {result for result in results if isinstance(result, str)}
-                out.extend(sorted(errors & out_errors))
+                out.extend(sorted(errors & piece_errors))
                 values = [
                     result
                     for result in results
                     if isinstance(result, Interval) and not result.is_bot()
                 ]
                 if values:
-                    value = Val(functools.reduce(operator.or_, values), out=value_out)
+                    joined = functools.reduce(operator.or_, values)
+                    value = Val(joined, piece_set=value_pieces)
                     if not value.iv.is_bot():
                         out.append((pc + 1, after.push(value)))
 
@@ -766,7 +824,7 @@ class UnboundedIntervalAnalysis:
                     (
                         pc + 1,
                         state.push(
-                            Val(Interval.top(), may_null=False, may_nonnull=True, is_ref=True)
+                            Val.reference()
                         ),
                     )
                 )
@@ -777,7 +835,8 @@ class UnboundedIntervalAnalysis:
                     out.append("out of bounds")
                 length_iv = sizes[0].iv & Interval.nonneg()
                 if not length_iv.is_bot():
-                    init_elem = Interval.const(0) if length_iv.max > 0 else Interval.bot()
+                    holds_elements = length_iv.max > 0
+                    init_elem = Interval.const(0) if holds_elements else Interval.bot()
                     out.append(
                         (
                             pc + 1,
@@ -805,18 +864,26 @@ class UnboundedIntervalAnalysis:
                 [ref, idx], after = state.pop(2)
                 if ref.may_null:
                     out.append("null pointer")
-                if ref.may_nonnull and check_index(ref, idx, out):
-                    loaded_iv = (
-                        ref.elem_iv if not ref.elem_iv.is_bot() else Interval.top()
-                    )
-                    out.append((pc + 1, after.push(Val(loaded_iv))))
+                if ref.may_nonnull:
+                    outside, inside = check_index(ref, idx)
+                    if outside:
+                        out.append("out of bounds")
+                    if inside:
+                        elements = ref.elem_iv
+                        loaded_iv = Interval.top() if elements.is_bot() else elements
+                        out.append((pc + 1, after.push(Val(loaded_iv))))
 
             case jvm.ArrayStore():
                 [ref, idx, val], after = state.pop(3)
                 if ref.may_null:
                     out.append("null pointer")
-                if ref.may_nonnull and check_index(ref, idx, out):
-                    out.append((pc + 1, after.update_array_elems(ref, val.iv)))
+                if ref.may_nonnull:
+                    outside, inside = check_index(ref, idx)
+                    if outside:
+                        out.append("out of bounds")
+                    if inside:
+                        stored = after.update_array_elems(ref, val.iv)
+                        out.append((pc + 1, stored))
 
             case jvm.CheckCast():
                 [ref], after = state.pop(1)
@@ -851,7 +918,7 @@ class UnboundedIntervalAnalysis:
                     Interval.nonneg(),
                     may_null=False,
                     may_nonnull=True,
-                    elem_iv=Interval(0, 65535),
+                    elem_iv=CHAR,
                     is_ref=True,
                 )
                 out.append((pc + 1, after if returns_void else after.push(ret_val)))
@@ -879,7 +946,7 @@ class UnboundedIntervalAnalysis:
                 nargs = len(m.extension.params) + 1
                 args, after = state.pop(nargs)
                 # A String cannot change, but getChars writes into a char[].
-                if m.classname.dotted() == "java.lang.String":
+                if m.classname.dotted() == STRING:
                     after = after.forget_elements(args[1:])
                 else:
                     after = after.forget_elements(args)
@@ -892,23 +959,20 @@ class UnboundedIntervalAnalysis:
                     classname_str = m.classname.dotted()
                     method_name = m.extension.name
 
-                    if classname_str == "java.lang.String":
+                    if classname_str == STRING:
                         match method_name:
                             case "equals":
                                 out.append((pc + 1, after.push(Val(Interval(0, 1)))))
                             case "length":
-                                str_len = Val(length(recv_arg), len_of=recv_arg.src)
-                                out.append((pc + 1, after.push(str_len)))
+                                size = Val(length(recv_arg), len_of=recv_arg.src)
+                                out.append((pc + 1, after.push(size)))
                             case "charAt":
                                 idx_arg = args[1]
                                 str_len = length(recv_arg)
                                 if idx_arg.iv.min < 0 or idx_arg.iv.max >= str_len.min:
                                     out.append("out of bounds")
-                                ch_iv = (
-                                    recv_arg.elem_iv
-                                    if not recv_arg.elem_iv.is_bot()
-                                    else Interval(0, 65535)
-                                )
+                                letters = recv_arg.elem_iv
+                                ch_iv = CHAR if letters.is_bot() else letters
                                 out.append((pc + 1, after.push(Val(ch_iv))))
                             case _:
                                 out.append((pc + 1, after_any_result))
@@ -917,19 +981,17 @@ class UnboundedIntervalAnalysis:
                         if method_name in ("nextBoolean", "flip"):
                             out.append((pc + 1, after.push(Val(Interval(0, 1)))))
                         else:
-                            out.append(
-                                (
-                                    pc + 1,
-                                    after if returns_void else after.push(Val(Interval.top())),
-                                )
-                            )
+                            result = Val(Interval.top())
+                            after_result = after if returns_void else after.push(result)
+                            out.append((pc + 1, after_result))
                     else:
+                        # The receiver is local 0 in the callee.
                         recv = Val(
                             recv_arg.iv,
-                            0,
+                            src=0,
                             elem_iv=recv_arg.elem_iv,
                             is_ref=True,
-                            out=recv_arg.out,
+                            piece_set=recv_arg.piece_set,
                         )
                         called = self._call(pc, m, [recv, *args[1:]], after)
                         if called is not None:
@@ -998,7 +1060,7 @@ class UnboundedIntervalAnalysis:
                                 a.bounded_by,
                                 a.alloc_id,
                                 True,
-                                a.out,
+                                a.piece_set,
                             ),
                         )
                         if a.src is not None
@@ -1008,12 +1070,14 @@ class UnboundedIntervalAnalysis:
             return res
 
         # if_acmpeq and if_acmpne compare references and give no int range.
-        unknown = a.may_null or b.may_null or a.is_ref or b.is_ref
-        if isinstance(opr, jvm.If) and (reference_condition or unknown):
+        compares_references = a.may_null or b.may_null or a.is_ref or b.is_ref
+        if isinstance(opr, jvm.If) and (reference_condition or compares_references):
             return [(pc % target, after), (pc + 1, after)]
 
         cmp_opr = cond if isinstance(cond, jvm.CmpOpr) else STR_TO_CMPOPR[cond_str]
-        outcomes = set(a.iv.compare(b.iv, cmp_opr)) & set(a.out.compare(b.out, cmp_opr))
+        interval_outcomes = set(a.iv.compare(b.iv, cmp_opr))
+        piece_outcomes = set(a.piece_set.compare(b.piece_set, cmp_opr))
+        outcomes = interval_outcomes & piece_outcomes
 
         res = []
         for taken in (True, False):
@@ -1021,9 +1085,9 @@ class UnboundedIntervalAnalysis:
                 continue
             tgt_pc = (pc % target) if taken else (pc + 1)
             ra_iv, rb_iv = a.iv.refine(b.iv, cmp_opr, taken)
-            ra_out, rb_out = a.out.refine(b.out, cmp_opr, taken)
-            ra_iv, ra_out = reduce_pair(ra_iv, ra_out)
-            rb_iv, rb_out = reduce_pair(rb_iv, rb_out)
+            ra_pieces, rb_pieces = a.piece_set.refine(b.piece_set, cmp_opr, taken)
+            ra_iv, ra_pieces = reduce_pair(ra_iv, ra_pieces)
+            rb_iv, rb_pieces = reduce_pair(rb_iv, rb_pieces)
 
             if ra_iv.is_bot() or rb_iv.is_bot():
                 continue
@@ -1055,7 +1119,7 @@ class UnboundedIntervalAnalysis:
                         a_bound,
                         a.alloc_id,
                         a.is_ref,
-                        ra_out,
+                        ra_pieces,
                     ),
                     preserve_bound=True,
                 )
@@ -1072,7 +1136,7 @@ class UnboundedIntervalAnalysis:
                         b_bound,
                         b.alloc_id,
                         b.is_ref,
-                        rb_out,
+                        rb_pieces,
                     ),
                     preserve_bound=True,
                 )
@@ -1103,11 +1167,12 @@ class UnboundedIntervalAnalysis:
             pts = points_cache[pc.method]
 
             for position, val in enumerate(ops):
-                if val.is_ref or (val.may_null and not val.may_nonnull) or val.iv.is_bot():
+                only_null = val.may_null and not val.may_nonnull
+                if val.is_ref or only_null or val.iv.is_bot():
                     continue
                 # With the points 0 and 300 the fuzzer records 7 as the range [1, 299].
                 # A sign stands for all ints of that sign so it is cut to the interval.
-                for piece in val.out.pieces:
+                for piece in val.piece_set.pieces:
                     for sub_iv in (piece & val.iv).split(pts):
                         tuples.add((pc, position, *range_of(sub_iv.min, pts)))
 
@@ -1134,30 +1199,26 @@ class UnboundedIntervalAnalysis:
         tracked_local = param_idx
 
         before = path[: path.index(target_pc)]
-        steps = [pc for pc in before if pc.method == target_pc.method]
-        k = len(steps) - 1
-        while k >= 0:
-            match self.bc[steps[k]]:
-                case jvm.Store(index=i) if i == tracked_local:
+        method_pcs = [pc for pc in before if pc.method == target_pc.method]
+        at = len(method_pcs) - 1
+        while at >= 0:
+            match self.bc[method_pcs[at]]:
+                case jvm.Store(index=local) if local == tracked_local:
                     # n = n op c is load n, push c, binary op and store n.
-                    if k < 3:
+                    if at < 3:
                         return Interval.top()
-                    load, push, binary = (self.bc[pc] for pc in steps[k - 3 : k])
-                    if not (
-                        isinstance(load, jvm.Load)
-                        and load.index == tracked_local
-                        and isinstance(push, jvm.Push)
-                        and isinstance(push.type, jvm.Int)
-                        and isinstance(binary, jvm.Binary)
-                    ):
+                    update = [self.bc[pc] for pc in method_pcs[at - 3 : at]]
+                    if not is_update_by_constant(*update, tracked_local):
                         return Interval.top()
+                    _, push, binary = update
                     constant = Interval.const(push.value)
                     cur_iv = backward_arith_left(binary.operant, cur_iv, constant)
-                    k -= 4
+                    at -= 4
                     continue
-                case jvm.Incr(index=i, amount=a) if i == tracked_local:
-                    cur_iv = backward_arith_left(jvm.BinaryOpr.Add, cur_iv, Interval.const(a))
-            k -= 1
+                case jvm.Incr(index=local, amount=amount) if local == tracked_local:
+                    step = Interval.const(amount)
+                    cur_iv = backward_arith_left(jvm.BinaryOpr.Add, cur_iv, step)
+            at -= 1
 
         entry_st = self.states.get(PC(target_pc.method, 0))
         if entry_st and param_idx < len(entry_st.locals):
@@ -1232,7 +1293,8 @@ def analyse():
         incomplete = True
 
     for query in jpamb.QUERIES:
-        may = incomplete or query in final or (query == "*" and diverge)
+        may_loop = query == "*" and diverge
+        may = incomplete or query in final or may_loop
         print(f"{query};{'maybe' if may else 'no'}")
 
 

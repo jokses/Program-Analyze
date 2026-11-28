@@ -9,6 +9,15 @@ import jvm.state as jvms
 
 INT_MIN = -(2**31)
 INT_MAX = (2**31) - 1
+# Source: https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-6.html#jvms-6.5.ishl
+# A shift only uses the low 5 bits of its distance.
+SHIFT_BITS = 0x1F
+
+
+# The smallest number with only ones in binary that is at least value, like 7 for 5.
+# For a non-negative int it is an int.
+def all_ones_up_to(value: int) -> int:
+    return (1 << value.bit_length()) - 1
 
 
 # If the result can leave the 32-bit range, go to top.
@@ -37,8 +46,8 @@ class Interval(Abstraction, Lattice):
         return cls(0, INT_MAX)
 
     @classmethod
-    def const(cls, c: int) -> Self:
-        return cls(c, c)
+    def const(cls, value: int) -> Self:
+        return cls(value, value)
 
     def is_bot(self) -> bool:
         return self.min > self.max
@@ -58,14 +67,13 @@ class Interval(Abstraction, Lattice):
         nums = [v.value for v in values]
 
         if not nums:
-            # The interval [1, 0] is empty as there is no numbers between min: 1 and max: 0
+            # [1, 0] is empty, since no number lies between the min 1 and the max 0.
             return cls(1, 0)
         return cls(min(nums), max(nums))
 
     def __contains__(self, value: jvms.StackValue | int) -> bool:
-        # Checks if the value is in the interval
-        v = value.value if isinstance(value, jvms.StackValue) else value
-        return self.min <= v <= self.max
+        number = value.value if isinstance(value, jvms.StackValue) else value
+        return self.min <= number <= self.max
 
     @classmethod
     def top(cls) -> Self:
@@ -160,8 +168,11 @@ class Interval(Abstraction, Lattice):
                 if not (min2 == 0 == max2):
                     m = max(abs(min2), abs(max2)) - 1
                     bound = max(abs(min1), abs(max1))
-                    lo = max(-m if min1 < 0 else 0, -bound)
-                    hi = min(m if max1 > 0 else 0, bound)
+                    # A remainder has the sign of the dividend.
+                    lowest = -m if min1 < 0 else 0
+                    highest = m if max1 > 0 else 0
+                    lo = max(lowest, -bound)
+                    hi = min(highest, bound)
                     result.append(wrap_or_top(lo, hi))
 
                 return result
@@ -189,44 +200,39 @@ class Interval(Abstraction, Lattice):
 
             case jvm.BitOpr.Or:
                 if min1 >= 0 and min2 >= 0:
-                    max_val = max(max1, max2)
-                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
-                    return Interval(max(min1, min2), min(INT_MAX, upper))
+                    return Interval(max(min1, min2), all_ones_up_to(max(max1, max2)))
                 return Interval.top()
 
             case jvm.BitOpr.Xor:
+                # Two 32-bit ints give a 32-bit int.
                 if self.single and other.single:
-                    val = min1 ^ min2
-                    val = ((val + (1 << 31)) % (1 << 32)) - (1 << 31)
-                    return Interval(val, val)
+                    return Interval.const(min1 ^ min2)
                 if min1 >= 0 and min2 >= 0:
-                    max_val = max(max1, max2)
-                    upper = (1 << max_val.bit_length()) - 1 if max_val > 0 else 0
-                    return Interval(0, min(INT_MAX, upper))
+                    return Interval(0, all_ones_up_to(max(max1, max2)))
                 return Interval.top()
 
             case jvm.BitOpr.Shl:
                 if other.single:
-                    s = min2 & 0x1F
-                    if s == 0:
+                    shift = min2 & SHIFT_BITS
+                    if shift == 0:
                         return self
-                    return wrap_or_top(min1 << s, max1 << s)
+                    return wrap_or_top(min1 << shift, max1 << shift)
                 return Interval.top()
 
             case jvm.BitOpr.Shr:
                 if other.single:
-                    s = min2 & 0x1F
-                    return Interval(min1 >> s, max1 >> s)
+                    shift = min2 & SHIFT_BITS
+                    return Interval(min1 >> shift, max1 >> shift)
                 return Interval.top()
 
             case jvm.BitOpr.Ushr:
                 if other.single:
-                    s = min2 & 0x1F
-                    if s == 0:
+                    shift = min2 & SHIFT_BITS
+                    if shift == 0:
                         return self
                     if min1 >= 0:
-                        return Interval(min1 >> s, max1 >> s)
-                    return Interval(0, INT_MAX >> (s - 1))
+                        return Interval(min1 >> shift, max1 >> shift)
+                    return Interval(0, INT_MAX >> (shift - 1))
                 return Interval.nonneg() if min1 >= 0 else Interval.top()
 
             case _:

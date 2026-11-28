@@ -4,6 +4,8 @@ import dynamic
 import fuzzer
 import pytest
 from unbounded import (
+    BYTE,
+    CHAR,
     INT_MIN,
     Interval,
     RangeCoverageOracle,
@@ -75,11 +77,11 @@ def test_solve_uncovered_range_undoes_the_loop_in_division_loop(bc):
 
 
 def to_byte(iv):
-    return cast_interval(iv, Interval(-128, 127))
+    return cast_interval(iv, BYTE)
 
 
 def to_char(iv):
-    return cast_interval(iv, Interval(0, 65535))
+    return cast_interval(iv, CHAR)
 
 
 # The value Java gives has to be in the pieces after the operation.

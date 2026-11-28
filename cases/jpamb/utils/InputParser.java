@@ -9,6 +9,10 @@ public class InputParser {
   private String currentToken;
   private final String input;
 
+  // A char like 'a', or '\0' and '\\' as a runner escapes them.
+  private static final String CHAR = "'\\\\?[^']'";
+  private static final String INTEGER = "-?[0-9]+";
+
   public static class ParseError extends RuntimeException {
     public ParseError(String err, String input) {
       super(err + " in " + input);
@@ -26,7 +30,7 @@ public class InputParser {
     if (sc.hasNext()) {
       currentToken =
           sc.findWithinHorizon(
-              "[-]?[0-9\\.]+|\\[[ICZ]:|\\(|\\)|\\]|,|'\\\\?[^']'|[sr]'[^']*'|true|false", 0);
+              "[-]?[0-9\\.]+|\\[[ICZ]:|\\(|\\)|\\]|,|" + CHAR + "|[sr]'[^']*'|true|false", 0);
     } else {
       currentToken = null;
     }
@@ -60,7 +64,7 @@ public class InputParser {
       int value = Integer.parseInt(currentToken);
       nextToken();
       return value;
-    } else if (currentToken.matches("'\\\\?[^']'")) {
+    } else if (currentToken.matches(CHAR)) {
       var chr = parseChar(currentToken);
       nextToken();
       return chr;
@@ -103,14 +107,14 @@ public class InputParser {
       return new int[] {};
     }
 
-    if (!currentToken.matches("-?[0-9]+")) expected("integer");
+    if (!currentToken.matches(INTEGER)) expected("integer");
 
     items.add(Integer.parseInt(currentToken));
     nextToken();
 
     while (currentToken != null && currentToken.equals(",")) {
       nextToken();
-      if (currentToken == null || !currentToken.matches("-?[0-9]+")) expected("integer");
+      if (currentToken == null || !currentToken.matches(INTEGER)) expected("integer");
       items.add(Integer.parseInt(currentToken));
       nextToken();
     }
@@ -135,14 +139,14 @@ public class InputParser {
       return new char[] {};
     }
 
-    if (!currentToken.matches("'\\\\?[^']'")) expected("char");
+    if (!currentToken.matches(CHAR)) expected("char");
 
     items.add(parseChar(currentToken));
     nextToken();
 
     while (currentToken != null && currentToken.equals(",")) {
       nextToken();
-      if (currentToken == null || !currentToken.matches("'\\\\?[^']'")) expected("char");
+      if (currentToken == null || !currentToken.matches(CHAR)) expected("char");
       items.add(parseChar(currentToken));
       nextToken();
     }

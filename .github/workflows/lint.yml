@@ -12,7 +12,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      # Run ruff linting (check only; fixes belong on the developer machine)
+      # Run ruff linting (check only)
       - name: Run Ruff Linting
         run: uv run ruff check .
       - name: Run Ruff Formatting

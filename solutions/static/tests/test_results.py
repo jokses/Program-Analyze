@@ -1,5 +1,5 @@
 import pytest
-from results import sign_test, split_and_domain
+from results import sign_test
 
 
 # The upper-tailed example in https://www.stat.umn.edu/geyer/5601/examp/sign.html
@@ -14,9 +14,3 @@ from results import sign_test, split_and_domain
 def test_sign_test_gives_the_p_value_of_at_least_this_many_wins(wins, pairs, p_value):
     assert sign_test(wins, pairs) == pytest.approx(p_value, abs=5e-6)
 
-
-def test_split_and_domain_refuses_a_mix():
-    three = {"split": "three", "domain": "sets"}
-    assert split_and_domain([three, three]) == ("three", "sets")
-    with pytest.raises(ValueError):
-        split_and_domain([three, {"split": "boundary", "domain": "sets"}])

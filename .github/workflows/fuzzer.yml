@@ -12,7 +12,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Run Ruff Linting
+      - name: Run ruff check
         run: uv run ruff check solutions/fuzzer solutions/static
   tests:
     runs-on: ubuntu-latest
@@ -22,6 +22,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+        # This looks a bit rough though it works
       - name: Install the packages and their test tools
         run: |
           uv venv --no-project .jpamb-eval

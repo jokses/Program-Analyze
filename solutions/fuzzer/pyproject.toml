@@ -39,5 +39,3 @@ extend-select = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # fuzzer.py writes a crash row for any exception.
 "src/fuzzer.py" = ["BLE001"]
-# Line length is not checked in teammates' files.
-"src/dynamic.py" = ["E501"]

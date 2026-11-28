@@ -40,17 +40,17 @@ INVOKES = (jvm.InvokeStatic, jvm.InvokeVirtual, jvm.InvokeSpecial, jvm.InvokeInt
 
 
 # The fuzzed method and the case methods it calls, also through other calls.
-def methods_reached(bc: jpamb.Bytecode, methodid: jvm.AbsMethodID) -> set:
+def methods_reached(
+    bc: jpamb.Bytecode, methodid: jvm.AbsMethodID
+) -> set[jvm.AbsMethodID]:
     methods = {methodid}
     todo = [methodid]
     while todo:
         for opcode in bc.getmethod(todo.pop()).opcodes:
             if isinstance(opcode, INVOKES):
                 callee = opcode.method
-                if (
-                    callee.classname.dotted().startswith("jpamb.cases")
-                    and callee not in methods
-                ):
+                in_cases = callee.classname.dotted().startswith("jpamb.cases")
+                if in_cases and callee not in methods:
                     methods.add(callee)
                     todo.append(callee)
     return methods
@@ -85,7 +85,7 @@ class Result:
     # is wrong.
     outside_bound: tuple[EncodedRange, ...] = ()
     # The run that first reached each target, for the targets that were reached.
-    target_runs: tuple[tuple[str, int, int, int, int], ...] = ()
+    target_runs: tuple[tuple[EncodedRange, int], ...] = ()
     error: str | None = None
 
 
@@ -108,14 +108,14 @@ def fuzz(
     # The split points are where the ranges change so they are tried first too, like
     # c - 1 and c + 1 next to c with --split boundary.
     # Source: Andersen et al., "Fuzz Smarter, Not Harder", PPPA'24 volume 1, section 2.
-    points = dynamic.split_points(set(dynamic.comparisons_in_method(methodid)), split)
+    points = dynamic.split_points(dynamic.comparisons_in_method(methodid), split)
     constants = sorted(dynamic.ints_in_method(method) | set(points))
     constants += dynamic.strings_in_method(method)
     first_codes = [b""] + [
         dynamic.constant_code(params, constant) for constant in constants
     ]
     reached = methods_reached(bc, methodid)
-    all_instructions = sum(len(bc.getmethod(method).opcodes) for method in reached)
+    all_instructions = sum(len(bc.getmethod(callee).opcodes) for callee in reached)
 
     instructions = set()
     ranges = set()
@@ -142,8 +142,8 @@ def fuzz(
         outcomes.add(trace.outcome)
         instructions |= trace.instructions
         ranges |= trace.ranges
-        for target in (targets - target_runs.keys()) & trace.ranges:
-            target_runs[target] = runs
+        for target in targets & trace.ranges:
+            target_runs.setdefault(target, runs)
         if version == Version.INSTRUCTION:
             coverage = trace.instructions
         else:
@@ -155,9 +155,10 @@ def fuzz(
             corpus.add(code, coverage)
 
         covered = {pc for pc in instructions if pc.method in reached}
+        bound_covered = bound is not None and bound <= ranges
         if version == Version.INSTRUCTION and len(covered) == all_instructions:
             reason = Stop.FULL_INSTRUCTION_COVERAGE
-        elif version == Version.RANGE and bound is not None and bound <= ranges:
+        elif version == Version.RANGE and bound_covered:
             reason = Stop.BOUND
         elif targets and len(target_runs) == len(targets):
             reason = Stop.TARGETS
@@ -171,6 +172,9 @@ def fuzz(
         else:
             continue
 
+        reached_targets = sorted(
+            (encode_range(target), run) for target, run in target_runs.items()
+        )
         return Result(
             method=methodid.encode(),
             version=version,
@@ -182,18 +186,14 @@ def fuzz(
             last_new_run=last_new_run,
             outcomes=tuple(sorted(outcomes)),
             instructions=tuple(sorted(pc.encode() for pc in instructions)),
-            ranges=encode(ranges),
+            ranges=encode_ranges(ranges),
             kept_inputs=tuple(
                 corpus.fuzz_input(code).encode() for code in corpus.interesting
             ),
             bound_size=None if bound is None else len(bound),
             bound_not_covered=None if bound is None else len(bound - ranges),
-            outside_bound=() if bound is None else encode(ranges - bound),
-            target_runs=tuple(
-                sorted(
-                    (*encode_range(target), run) for target, run in target_runs.items()
-                )
-            ),
+            outside_bound=() if bound is None else encode_ranges(ranges - bound),
+            target_runs=tuple(reached_targets),
         )
 
 
@@ -202,8 +202,8 @@ def encode_range(range_) -> EncodedRange:
     return (pc.encode(), *rest)
 
 
-def encode(ranges: set) -> tuple[EncodedRange, ...]:
-    return tuple(sorted(map(encode_range, ranges)))
+def encode_ranges(ranges: set) -> tuple[EncodedRange, ...]:
+    return tuple(sorted(encode_range(range_) for range_ in ranges))
 
 
 def all_methods(suite: jpamb.Suite, *, eff: jpamb.Effect) -> list[jvm.AbsMethodID]:
@@ -248,7 +248,7 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
     domain = args.domain if domains else ""
 
     # Absolute menace of a loop composition as this would never ever be acceptable
-    # theoretically but it works pratically.
+    # theoretically but it works practically.
     with open(args.out, "w") if args.out else contextlib.nullcontext(sys.stdout) as out:
         for methodid in methods:
             bound = None
@@ -285,9 +285,9 @@ def main(bound_of=None, domains: tuple[str, ...] = ()):
                             error = crash
                     if error is not None:
                         result = Result(
-                            methodid.encode(),
-                            version,
-                            seed,
+                            method=methodid.encode(),
+                            version=version,
+                            seed=seed,
                             split=args.split,
                             domain=domain,
                             stop_reason=Stop.CRASH,

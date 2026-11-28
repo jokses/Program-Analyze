@@ -49,8 +49,5 @@ extend-select = ["E501"]
 "src/tools.py" = ["PLR0124"]
 # The file's own test runner prints FAIL for any exception.
 "tests/test_interval_outliers_abs.py" = ["BLE001", "PLR0124"]
-# Line length is not checked in teammates' files. Most of unbounded.py is a
-# teammate's, and it answers maybe to every query when the analysis fails.
-"src/absIntervals.py" = ["E501"]
-"src/absSigns.py" = ["E501"]
-"src/unbounded.py" = ["BLE001", "E501"]
+# unbounded.py answers maybe to every query when the analysis fails.
+"src/unbounded.py" = ["BLE001"]

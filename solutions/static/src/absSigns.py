@@ -101,10 +101,10 @@ class SignSet(Abstraction, Lattice):
 
         return SignSet(self.signs & other.signs)
 
-    # The following operations are not very specific in many of the outputs, often being [-1, 0, 1]
-    # where one might consider it irrelevant. However, this is because of the range of integers.
-    # Java transforms them like in a circle meaning adding two integers will become negative if
-    # exceeding this range.
+    # The following operations are not very specific in many of the outputs, often
+    # being [-1, 0, 1] where one might consider it irrelevant. However, this is because
+    # of the range of integers. Java transforms them like in a circle meaning adding
+    # two integers will become negative if exceeding this range.
     def arithmetic(self, other: "SignSet", opr: jvm.BinaryOpr) -> list["SignSet | str"]:
         match opr:
             case jvm.BinaryOpr.Add:
@@ -212,19 +212,18 @@ class SignSet(Abstraction, Lattice):
                 return cases
             case jvm.CmpOpr.Lt:
                 cases = set()
-
                 for x in self.signs:
                     for y in other.signs:
-                        if x < y:
+                        if x == 0 or y == 0:
+                            cases.add(x < y)
+                            continue
+                        if x <= y:
                             cases.add(True)
-                        elif x > y or x == 0 or y == 0:
+                        if x >= y:
                             cases.add(False)
-                        else:
-                            cases.update([True, False])
                 return cases
             case jvm.CmpOpr.Ge:
                 cases = set()
-
                 for x in self.signs:
                     for y in other.signs:
                         if x == 0 or y == 0:
@@ -237,15 +236,15 @@ class SignSet(Abstraction, Lattice):
                 return cases
             case jvm.CmpOpr.Gt:
                 cases = set()
-
                 for x in self.signs:
                     for y in other.signs:
-                        if x > y:
+                        if x == 0 or y == 0:
+                            cases.add(x > y)
+                            continue
+                        if x >= y:
                             cases.add(True)
-                        elif x < y or x == 0 or y == 0:
+                        if x <= y:
                             cases.add(False)
-                        else:
-                            cases.update([True, False])
                 return cases
             case jvm.CmpOpr.Eq:
                 cases = set()

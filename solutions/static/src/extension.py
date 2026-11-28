@@ -12,8 +12,9 @@ from unbounded import DOMAINS, Interval, RangeCoverageOracle, UnboundedIntervalA
 import jpamb
 import jvm
 
-# Group 5 stop the binary search at about 20 values and test all of them. Going
-# backwards tests at most as many for each kept input and int parameter.
+# The binary search of "Fuzz Smarter, Not Harder" stops at about 20 values and tests
+# all of them. Going backwards tests at most as many for each kept input and int
+# parameter.
 CANDIDATES = 20
 # Fuzzing for longer gets ten times as many runs without new coverage.
 LONGER = 10 * fuzzer.MAX_RUNS_SINCE_NEW
@@ -31,8 +32,13 @@ class Attempt:
         return self.runs if self.reached else None
 
 
+# Small enough to test every value in it.
+def is_small(iv: Interval) -> bool:
+    return iv.max - iv.min < CANDIDATES
+
+
 def candidates(iv: Interval) -> list[int]:
-    if iv.max - iv.min < CANDIDATES:
+    if is_small(iv):
         return list(range(iv.min, iv.max + 1))
     step = (iv.max - iv.min) / (CANDIDATES - 1)
     return sorted({round(iv.min + i * step) for i in range(CANDIDATES)})
@@ -44,7 +50,8 @@ def with_value(input: jpamb.case.Input, index: int, value: int) -> jpamb.case.In
     return jpamb.case.Input(tuple(values))
 
 
-# The method whose uncovered ranges are searched for, and the split of its ranges.
+# The method whose uncovered ranges are searched for, with the split and domain of
+# its bound.
 @dataclass(frozen=True)
 class Search:
     bc: jpamb.Bytecode
@@ -56,7 +63,9 @@ class Search:
 
 
 # Runs the values one by one until one reaches the target.
-def try_values(search: Search, base, index, values, target) -> Attempt:
+def try_values(
+    search: Search, base: jpamb.case.Input, index: int, values: list[int], target
+) -> Attempt:
     for runs, value in enumerate(values, start=1):
         input = with_value(base, index, value)
         trace = dynamic.run(
@@ -71,7 +80,7 @@ def try_values(search: Search, base, index, values, target) -> Attempt:
     return Attempt(len(values), False)
 
 
-def backwards(search: Search, kept, target) -> Attempt:
+def backwards(search: Search, kept: list[jpamb.case.Input], target) -> Attempt:
     runs = 0
     for base in kept:
         path = dynamic.run(
@@ -89,37 +98,44 @@ def backwards(search: Search, kept, target) -> Attempt:
 
 
 # The halving does not depend on the seed, so the seeds share it.
-HALVED: dict = {}
+HALVED: dict[tuple, Interval] = {}
 
 
 # Source: Andersen et al., "Fuzz Smarter, Not Harder", PPPA'24 volume 1, section 2.
 # Halve the interval of the parameter and keep a half where the analysis still
 # allows the target. Their paper does not say which half to take when both allow it,
 # and we take the lower one.
-def halve(search: Search, index, target) -> Interval:
+def halve(search: Search, index: int, target) -> Interval:
     key = (search.methodid, index, target, search.split, search.domain)
     if key not in HALVED:
         iv = Interval.top()
-        while iv.max - iv.min >= CANDIDATES:
-            middle = (iv.min + iv.max) // 2
-            for half in (Interval(iv.min, middle), Interval(middle + 1, iv.max)):
-                analysis = UnboundedIntervalAnalysis(
-                    search.bc, search.methodid, None, {index: half}, search.domain
-                )
-                if target in analysis.run().reachable_range_tuples(split=search.split):
-                    iv = half
-                    break
-            else:
+        while not is_small(iv):
+            half = allowed_half(search, index, target, iv)
+            if half is None:
                 break
+            iv = half
         HALVED[key] = iv
     return HALVED[key]
 
 
-def binary_search(search: Search, base, target) -> Attempt:
+# The lower half of iv when the analysis allows the target there, else the upper
+# half when it allows it there, else None.
+def allowed_half(search: Search, index: int, target, iv: Interval) -> Interval | None:
+    middle = (iv.min + iv.max) // 2
+    for half in (Interval(iv.min, middle), Interval(middle + 1, iv.max)):
+        analysis = UnboundedIntervalAnalysis(
+            search.bc, search.methodid, param_ivs={index: half}, domain=search.domain
+        )
+        if target in analysis.run().reachable_range_tuples(split=search.split):
+            return half
+    return None
+
+
+def binary_search(search: Search, base: jpamb.case.Input, target) -> Attempt:
     runs = 0
     for index in search.int_params:
         iv = halve(search, index, target)
-        if iv.max - iv.min < CANDIDATES:
+        if is_small(iv):
             tried = try_values(search, base, index, candidates(iv), target)
             runs += tried.runs
             if tried.reached:
@@ -155,14 +171,14 @@ def extend(search: Search, seed: int) -> list[dict]:
         max_runs_since_new=LONGER,
         targets=frozenset(targets),
     )
-    longer_runs = {
-        tuple(reached[:4]): reached[4] - first.runs for reached in longer.target_runs
-    }
+    longer_runs = {target: run - first.runs for target, run in longer.target_runs}
+    # The first input, from the empty code, is always kept, since every run covers an
+    # instruction.
     kept = [jpamb.case.Input.decode(code) for code in first.kept_inputs]
     rows = []
     for target in targets:
         back = backwards(search, kept, target)
-        binary = binary_search(search, kept[0], target) if kept else Attempt(0, False)
+        binary = binary_search(search, kept[0], target)
         combined = (
             back if back.reached else Attempt(back.runs + binary.runs, binary.reached)
         )
@@ -176,16 +192,26 @@ def extend(search: Search, seed: int) -> list[dict]:
                 "binary_search": binary.runs_if_reached(),
                 "combined": combined.runs_if_reached(),
                 "longer": longer_runs.get(fuzzer.encode_range(target)),
+                "domain": search.domain,
             }
         )
     return rows
 
 
+# The rows of targets, without the rows of methods that crashed.
+def target_rows(rows) -> list[dict]:
+    return [row for row in rows if "error" not in row]
+
+
+def reached_runs(rows, way) -> list[int]:
+    return [row[way] for row in rows if row[way] is not None]
+
+
 def summary(rows, file):
-    rows = [row for row in rows if "error" not in row]
+    rows = target_rows(rows)
     print("targets", len(rows), file=file)
     for way in WAYS:
-        runs = [row[way] for row in rows if row[way] is not None]
+        runs = reached_runs(rows, way)
         print(way, "reached", len(runs), "median runs", checks.median(runs), file=file)
 
 
@@ -200,7 +226,9 @@ def main():
         for methodid in methods:
             params = methodid.extension.params
             int_params = [
-                i for i, param in enumerate(params) if isinstance(param, jvm.Int)
+                index
+                for index, param in enumerate(params)
+                if isinstance(param, jvm.Int)
             ]
             if not int_params:
                 continue
@@ -221,9 +249,10 @@ def main():
                         "method": methodid.encode(),
                         "split": args.split,
                         "error": repr(error),
+                        "domain": args.domain,
                     }
                 ]
             for row in new_rows:
-                out.write(json.dumps({**row, "domain": args.domain}) + "\n")
+                out.write(json.dumps(row) + "\n")
             rows += new_rows
     summary(rows, sys.stderr)

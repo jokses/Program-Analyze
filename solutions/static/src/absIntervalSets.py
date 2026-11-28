@@ -25,11 +25,9 @@ class IntervalSet(Abstraction, Lattice):
     # Overlapping and touching pieces are merged so equal sets look the same.
     @classmethod
     def make(cls, pieces: Iterable[Interval]) -> Self:
+        kept = [piece for piece in pieces if not piece.is_bot()]
         merged: list[Interval] = []
-        for piece in sorted(
-            (piece for piece in pieces if not piece.is_bot()),
-            key=lambda piece: piece.min,
-        ):
+        for piece in sorted(kept, key=lambda piece: piece.min):
             if merged and piece.min <= merged[-1].max + 1:
                 merged[-1] = merged[-1] | piece
             else:
@@ -60,15 +58,15 @@ class IntervalSet(Abstraction, Lattice):
     def __and__(self, other: Self) -> Self:
         return self.make(left & right for left in self.pieces for right in other.pieces)
 
+    def holds(self, interval: Interval) -> bool:
+        return any(
+            piece.min <= interval.min and interval.max <= piece.max
+            for piece in self.pieces
+        )
+
     # The pieces are merged so each piece of self has to lie in one piece of other.
     def __le__(self, other: Self) -> bool:
-        return all(
-            any(
-                right.min <= left.min and left.max <= right.max
-                for right in other.pieces
-            )
-            for left in self.pieces
-        )
+        return all(other.holds(piece) for piece in self.pieces)
 
     def __lt__(self, other: Self) -> bool:
         return self <= other and self != other
@@ -92,7 +90,9 @@ class IntervalSet(Abstraction, Lattice):
                             errors.append(result)
                     else:
                         values.append(result)
-        return [*errors, self.make(values)] if values else list(errors)
+        if not values:
+            return list(errors)
+        return [*errors, self.make(values)]
 
     def compare(self, other: Self, opr: jvm.CmpOpr) -> set[bool]:
         return {
@@ -113,8 +113,12 @@ class IntervalSet(Abstraction, Lattice):
                 if outcome not in left.compare(right, opr):
                     continue
                 left_kept, right_kept = left.refine(right, opr, outcome)
-                self_kept += without(left_kept, right) if differs else [left_kept]
-                other_kept += without(right_kept, left) if differs else [right_kept]
+                if differs:
+                    self_kept += without(left_kept, right)
+                    other_kept += without(right_kept, left)
+                else:
+                    self_kept.append(left_kept)
+                    other_kept.append(right_kept)
         return self.make(self_kept), self.make(other_kept)
 
     # Each range between the constants in K is widened on its own and stays inside
@@ -122,27 +126,33 @@ class IntervalSet(Abstraction, Lattice):
     # so the widening stops.
     def widen(self, other: Self, K: set) -> Self:
         constants = sorted(K)
-        old, new = by_range(self, constants), by_range(other, constants)
-        return self.make(
-            old.get(bounds, Interval.bot()).widen(new.get(bounds, Interval.bot()), K)
-            & Interval(*bounds)
-            for bounds in old.keys() | new.keys()
-        )
+        old = by_range(self, constants)
+        new = by_range(other, constants)
+        widened = []
+        for bounds in old.keys() | new.keys():
+            before = old.get(bounds, Interval.bot())
+            after = new.get(bounds, Interval.bot())
+            widened.append(before.widen(after, K) & Interval(*bounds))
+        return self.make(widened)
 
 
-def without(iv: Interval, point: Interval) -> list[Interval]:
-    if point.min != point.max or not iv.min < point.min < iv.max:
-        return [iv]
-    return [Interval(iv.min, point.min - 1), Interval(point.min + 1, iv.max)]
+# interval without point, when point is one number strictly inside it.
+def without(interval: Interval, point: Interval) -> list[Interval]:
+    cuts_middle = point.single and interval.min < point.min < interval.max
+    if not cuts_middle:
+        return [interval]
+    below = Interval(interval.min, point.min - 1)
+    above = Interval(point.min + 1, interval.max)
+    return [below, above]
 
 
-# The range of x is [k, k] for a constant k, else the ints between two constants.
-def range_around(x: int, constants: list[int]) -> tuple[int, int]:
-    i = bisect.bisect_left(constants, x)
-    if i < len(constants) and constants[i] == x:
-        return x, x
-    low = constants[i - 1] + 1 if i > 0 else INT_MIN
-    high = constants[i] - 1 if i < len(constants) else INT_MAX
+# The range of value is [k, k] for a constant k, else the ints between two constants.
+def range_around(value: int, constants: list[int]) -> tuple[int, int]:
+    index = bisect.bisect_left(constants, value)
+    if index < len(constants) and constants[index] == value:
+        return value, value
+    low = constants[index - 1] + 1 if index > 0 else INT_MIN
+    high = constants[index] - 1 if index < len(constants) else INT_MAX
     return low, high
 
 
