@@ -15,9 +15,9 @@ For each method we return two sets:
 How to run it (from the root of the repository):
   python solutions/syntactic/src/syntactic_constants.py 'jpamb.cases.Dependent.divisionLoop:(I)V'
   python solutions/syntactic/src/syntactic_constants.py cases/jpamb/cases/Dependent.java divisionLoop
-  python solutions/syntactic/src/syntactic_constants.py --all --out constants.json
+  python solutions/syntactic/src/syntactic_constants.py --all --out solutions/syntactic/constants.json
 
-With the last one we collect the constants of every method in cases.txt and write them to constants.json.
+With the last one we collect the constants of every method in cases.txt and write them to solutions/syntactic/constants.json, which the interval analysis reads.
 
 Extra options: --no-calls (do not look inside called methods), --neighbours (also add c-1 and c+1).
 """
