@@ -44,11 +44,12 @@ public class InputParser {
   }
 
   // A command line argument cannot hold a NUL so a runner writes it as \0 and a
-  // backslash as \\.
+  // backslash as \\. The NUL is made at run time, because jvm2json cannot decode a
+  // NUL in a string constant of a class file.
   private static final Pattern ESCAPE = Pattern.compile("\\\\([0\\\\])");
 
   private static String unescape(String text) {
-    return ESCAPE.matcher(text).replaceAll(escape -> escape.group(1).equals("0") ? "\0" : "\\\\");
+    return ESCAPE.matcher(text).replaceAll(escape -> escape.group(1).equals("0") ? String.valueOf((char) 0) : "\\\\");
   }
 
   private static char parseChar(String token) {
