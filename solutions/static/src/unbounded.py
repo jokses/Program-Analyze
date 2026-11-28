@@ -157,8 +157,9 @@ def pieces_arithmetic(
     return errors, next(iter(values), None)
 
 
-# -INT_MIN does not fit and Java gives INT_MIN back, so such an interval becomes
-# all ints.
+# Negating [a, b] gives [-b, -a]. When a is INT_MIN this fails: -INT_MIN does not
+# fit in an int, and Java gives INT_MIN back. The result is then two pieces, not one
+# interval, so we return all ints.
 def negate_interval(iv: Interval) -> Interval:
     if iv.is_bot():
         return iv
@@ -304,8 +305,17 @@ def same_array(array: Val, value: Val, slot: int | None = None) -> bool:
     return same_local or same_allocation
 
 
-# Library calls that cannot fail or loop so they add no outcomes.
-SAFE_CALLS = ("Object.<init>", "AssertionError.<init>", "StringBuilder.")
+# Library calls that cannot fail or loop, so they add no outcomes: every method of
+# StringBuilder, and the constructors of Object and AssertionError.
+SAFE_CLASS = "java.lang.StringBuilder"
+SAFE_CONSTRUCTORS = {"java.lang.Object", "java.lang.AssertionError"}
+
+
+def is_safe_call(method: jvm.AbsMethodID) -> bool:
+    classname = method.classname.dotted()
+    if classname == SAFE_CLASS:
+        return True
+    return classname in SAFE_CONSTRUCTORS and method.extension.name == "<init>"
 
 @dataclass(frozen=True)
 class State(sexpr.AsSExpr):
@@ -997,7 +1007,7 @@ class UnboundedIntervalAnalysis:
                         if called is not None:
                             out.extend(called)
                         else:
-                            if not any(name in str(m) for name in SAFE_CALLS):
+                            if not is_safe_call(m):
                                 self.has_unknown_call = True
                                 self.outcomes.update(ALL_OUTCOMES)
                             out.append((pc + 1, after_any_result))
