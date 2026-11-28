@@ -1,33 +1,34 @@
 # Static
 
-The interval analysis that gives the fuzzer its bound, and the scripts that run and summarize the evaluation.
+The interval analysis that gives the fuzzer its bound, and the commands that run and summarize the evaluation. The [root README](../../README.md) explains the idea, the evaluation and the terms used here. This README is about using the package. Install as described there, and run everything from the root of the repository.
+
+## Running
+
+The root README's [Running the evaluation](../../README.md#running-the-evaluation) has the commands of a whole run, and each command takes `--help`. Every JSON line a command writes records its split and domain, and `fuzzer-results`, `fuzzer-jvm-check` and `fuzzer-figures` refuse input that mixes splits or domains.
 
 ## Files
 
-- `unbounded.py` runs the interval analysis over a method and the methods it calls, with widening at loop heads. `RangeCoverageOracle.build` gives the bound: every (pc, operand, range) the analysis allows, with the same ranges the fuzzer records.
-- `absIntervals.py` is the interval domain. `absIntervalSets.py` keeps a value as separate intervals so that n != 0 leaves out the range where n is 0, `absOutliers.py` keeps far values as points and `absSigns.py` keeps the signs. `--domain sets` (the default), `--domain outliers` or `--domain signs` picks one for a run.
-- `static.py` is the sign analysis `static-analysis` runs.
-- `evaluation.py` is `fuzzer-with-bound`: the fuzzer with the bound from the analysis.
-- `extension.py` is `fuzzer-extension`. For each range the range fuzzer did not cover, it tries going backwards along a run, Group 5's binary search and fuzzing ten times longer. Combined is going backwards first and the binary search after it.
-- `results.py` is `fuzzer-results`. It prints the numbers the proposal asks for, with paired sign tests over the seeds.
-- `jvm_check.py` is `fuzzer-jvm-check`. It runs every kept input of a round again on the real JVM with the agent (see `solutions/fuzzer/README.md` for building it), and checks that the JVM gives our interpreter's outcome and that every divisor the JVM sees is in the bound.
+- `unbounded.py` is the interval analysis over a method and the methods it calls, widening at loop heads with the method's constants. `RangeCoverageOracle.build` gives the bound: for each operand of each comparison, division and array access, the ranges the analysis allows.
+- `tools.py` holds what every domain implements, and `absIntervals.py` is the interval domain. `absIntervalSets.py`, `absOutliers.py` and `absSigns.py` are the domains `sets`, `outliers` and `signs` of `--domain`.
+- `evaluation.py` is `fuzzer-with-bound`, which runs `fuzzer` with the bound. Each line also gets the analysis time, the size of the bound, how many of its ranges were not covered, and the covered ranges outside it.
+- `extension.py` is `fuzzer-extension`, which tries the [four ways](../../README.md#when-ranges-stay-uncovered) on each uncovered range. It writes one JSON line per uncovered range, with the runs each way needed, or null.
+- `results.py` is `fuzzer-results`, which prints the summary of one split and domain. Besides the comparison per method from `estimates.py`, it prints the sign tests over seeds that our proposal fixed before the first run, although a seed pairs nothing between two versions. Given a file of `fuzzer-extension`, it also counts what each way reached.
+- `estimates.py` computes the comparison per method that the root README describes: the means on a log scale with a t-interval over the methods, a Mann–Whitney test on each method with Holm's correction, and the highest rate still consistent with a count of zero.
+- `jvm_check.py` is `fuzzer-jvm-check`, the check on the JVM. It needs the agent, built as described in the [fuzzer README](../fuzzer/README.md#building-the-agent).
+- `figures.py` is `fuzzer-figures`, which draws the paper's figures as PDF from the folder of an evaluation. For the coverage curves it fuzzes two methods again, with `--seeds` seeds. `tables.py` writes the paper's tables as LaTeX from the same numbers.
+- `static.py` is the sign analysis from the course exercises, as `static-analysis` and `static-interpreter` for JPAMB. It is separate from the `signs` domain, and the evaluation does not use it.
 
-## Running a round
+## Notes
 
-Install the venv as in `solutions/fuzzer/README.md`, then also `uv pip install --editable solutions/static`. A round is these commands, run from the root of the repository with both splits. `--domain outliers` or `--domain signs` runs the same round with that domain instead of the interval sets.
-
-```bash
-mkdir -p results/round2 && git rev-parse HEAD > results/round2/commit.txt
-fuzzer-with-bound --all --seeds 10 --split three --out results/round2/three.jsonl
-fuzzer-extension --all --seeds 10 --split three --out results/round2/extension_three.jsonl
-fuzzer-results results/round2/three.jsonl results/round2/extension_three.jsonl > results/round2/three.txt
-```
-
-The three split took 88 minutes on our machine and the boundary split 140, most of it in `fuzzer-extension`.
+- Going backwards tests at most 20 values for each kept input and int parameter, and the binary search at most 20 for each int parameter. Both need a method with int parameters.
+- The run count of the binary search does not include the runs of the analysis it makes.
 
 ## Tests
 
+Run the tests, and the sign analysis on JPAMB:
+
 ```bash
-uv pip install --group solutions/static/pyproject.toml:dev
 python -m pytest solutions/static/tests
+jpamb interpret static-interpreter
+jpamb analyse static-analysis
 ```
