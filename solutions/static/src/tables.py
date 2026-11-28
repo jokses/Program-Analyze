@@ -1,9 +1,7 @@
-import json
 import re
 import statistics
 from pathlib import Path
 
-import checks
 import estimates
 import extension
 import fuzzer
@@ -58,15 +56,12 @@ def jvm_numbers(path: Path) -> tuple[int, int, int, int]:
     return same, different, seen, outside
 
 
-# n == 32 at the assertion of divisionLoop: in how many seeds going backwards
-# reached it, of the seeds that left it uncovered.
-def designed_backwards(targets) -> tuple[int, int]:
-    division_loop = json.loads(checks.DESIGNED_RANGES.read_text())[0]
-    open_ranges = [
-        row for row in targets if checks.inside(row["target"], division_loop)
-    ]
-    reached = extension.reached_runs(open_ranges, "backwards")
-    return len(reached), len(open_ranges)
+# How many of the ranges the range version leaves uncovered on divisionLoop going
+# backwards reached.
+def division_loop_backwards(targets) -> tuple[int, int]:
+    uncovered = results.division_loop_targets(targets)
+    reached = extension.reached_runs(uncovered, "backwards")
+    return len(reached), len(uncovered)
 
 
 def more_same_fewer(comparisons) -> str:
@@ -100,7 +95,7 @@ def claims_rows(split_run: dict, expected) -> list[tuple[str, str]]:
     earlier, later = results.holm_counts(runs_comparisons)
     analysis = sum(row["analysis_seconds"] for row in range_rows)
     total = sum(row["analysis_seconds"] + row["cpu_seconds"] for row in range_rows)
-    backwards, open_seeds = designed_backwards(split_run["extension"])
+    backwards, uncovered = division_loop_backwards(split_run["extension"])
     same, different, divisors, divisors_outside = split_run["jvm"]
     cost = estimates.more_runs(groups, methods)
     return [
@@ -122,8 +117,8 @@ def claims_rows(split_run: dict, expected) -> list[tuple[str, str]]:
             more_same_fewer(full_comparisons),
         ),
         (
-            r"\texttt{divisionLoop}: $n = 32$ reached by going backwards",
-            f"{backwards} of {open_seeds} seeds",
+            r"\texttt{divisionLoop}: uncovered ranges reached by going backwards",
+            f"{backwards} of {uncovered}",
         ),
         (
             "Share of the range version's CPU time in the analysis",

@@ -2,16 +2,10 @@ import argparse
 import json
 import statistics
 from collections import defaultdict
-from pathlib import Path
 
 import fuzzer
-from dynamic import comparisons_in_method, range_of, split_points
 
 import jpamb
-import jvm
-
-# The ranges our methods are written to reach. The pcs are from `jpamb inspect`.
-DESIGNED_RANGES = Path(__file__).resolve().parents[1] / "designed_ranges.json"
 
 
 def read_rows(path: str) -> list[dict]:
@@ -42,36 +36,11 @@ def expected_outcomes() -> dict[str, set[str]]:
     return expected
 
 
-# A split shows a designed range when its range around the low end lies inside it.
-# With "three" the range around 301 is [301, 2**31 - 1] and only "boundary" shows
-# sum == 301.
-def shown(designed, split) -> bool:
-    methodid = jvm.AbsMethodID.decode(designed["method"])
-    points = split_points(comparisons_in_method(methodid), split)
-    low, high = range_of(designed["low"], points)
-    return within(designed, low, high)
-
-
-def within(designed, low: int, high: int) -> bool:
-    return designed["low"] <= low and high <= designed["high"]
-
-
-def inside(covered, designed) -> bool:
-    pc, operand, low, high = covered
-    designed_pc = f"{designed['method']}:{designed['pc']}"
-    same_operand = pc == designed_pc and operand == designed["operand"]
-    return same_operand and within(designed, low, high)
-
-
 # Only range uses the bound, so only its seconds include the analysis.
 def cpu_seconds(rows, version) -> list[float]:
     if version == fuzzer.Version.RANGE:
         return [row["cpu_seconds"] + row["analysis_seconds"] for row in rows]
     return [row["cpu_seconds"] for row in rows]
-
-
-def reached(row, designed) -> bool:
-    return any(inside(covered, designed) for covered in row["ranges"])
 
 
 def main():
@@ -86,9 +55,6 @@ def main():
     for path in args.rows:
         rows += read_rows(path)
     expected = expected_outcomes()
-    designed_ranges = defaultdict(list)
-    for designed in json.loads(DESIGNED_RANGES.read_text()):
-        designed_ranges[designed["method"]].append(designed)
 
     groups = defaultdict(list)
     crashes = defaultdict(int)
@@ -137,9 +103,3 @@ def main():
             bound,
             outside,
         )
-        for designed in designed_ranges[method]:
-            if shown(designed, split):
-                count = sum(reached(row, designed) for row in seed_rows)
-                print(f"  {designed['what']} in {count} of {len(seed_rows)} seeds")
-            else:
-                print(f"  {designed['what']} cannot be seen with {split}")

@@ -1,5 +1,4 @@
 import argparse
-import json
 import math
 import statistics
 import sys
@@ -182,23 +181,12 @@ def full_coverage_numbers(groups, methods) -> list[str]:
 
 
 def version_numbers(groups, expected):
-    designed_by_method = defaultdict(list)
-    for designed in json.loads(checks.DESIGNED_RANGES.read_text()):
-        designed_by_method[designed["method"]].append(designed)
     for version in fuzzer.Version:
         version_rows = rows_of(groups, version)
         stops = defaultdict(int)
         for row in version_rows:
             stops[row["stop_reason"]] += 1
         missed = sum(misses_an_outcome(row, expected) for row in version_rows)
-        designed_rows = []
-        for row in version_rows:
-            for designed in designed_by_method[row["method"]]:
-                if checks.shown(designed, row["split"]):
-                    designed_rows.append((row, designed))
-        designed_missed = sum(
-            not checks.reached(row, designed) for row, designed in designed_rows
-        )
         print(
             version,
             "stops",
@@ -209,10 +197,6 @@ def version_numbers(groups, expected):
             missed,
             "of",
             len(version_rows),
-            "| designed ranges missed",
-            designed_missed,
-            "of",
-            len(designed_rows),
         )
         # A seed that hit the step limit may have found the outcome with more steps.
         missed_at_limit = sum(
@@ -363,30 +347,32 @@ def method_numbers(groups, methods, unreachable, full, expected):
     )
 
 
-# For each designed range left uncovered, like n == 32 in divisionLoop, in how many
-# seeds each way reached it and with how many runs.
-def designed_numbers(rows):
-    for designed in json.loads(checks.DESIGNED_RANGES.read_text()):
-        targets = [
-            row
-            for row in extension.target_rows(rows)
-            if checks.inside(row["target"], designed)
-        ]
-        # A split that cannot show the range gives no targets.
-        if not targets:
-            continue
-        for way in extension.WAYS:
-            runs = extension.reached_runs(targets, way)
-            print(
-                designed["what"],
-                way,
-                "reached in",
-                len(runs),
-                "of",
-                len(targets),
-                "seeds, median runs",
-                checks.median(runs),
-            )
+# Our proposal expects going backwards to reach the ranges the range version leaves
+# uncovered on divisionLoop, n == 32 at its assertion.
+DIVISION_LOOP = "jpamb.cases.Dependent.divisionLoop:(I)V"
+
+
+def division_loop_targets(rows) -> list[dict]:
+    targets = extension.target_rows(rows)
+    return [row for row in targets if row["method"] == DIVISION_LOOP]
+
+
+# For each way, how many of divisionLoop's uncovered ranges it reached, over all seeds,
+# and with how many runs.
+def division_loop_numbers(rows):
+    targets = division_loop_targets(rows)
+    for way in extension.WAYS:
+        runs = extension.reached_runs(targets, way)
+        print(
+            "divisionLoop uncovered ranges",
+            way,
+            "reached",
+            len(runs),
+            "of",
+            len(targets),
+            "median runs",
+            checks.median(runs),
+        )
 
 
 def main():
@@ -410,4 +396,4 @@ def main():
         # The extension rows must have the split and domain of the runs.
         checks.split_and_domain(runs + rows)
         extension.summary(rows, sys.stdout)
-        designed_numbers(rows)
+        division_loop_numbers(rows)

@@ -284,9 +284,9 @@ def label_estimate(axis, estimate: estimates.Estimate):
     )
 
 
-# The open ranges the extension tried, by which way reached them. Going backwards and
-# the binary search are counted together where both reached a range, so the bar
-# shows how far each one adds to the other.
+# The uncovered ranges the extension tried, by which way reached them. Going
+# backwards and the binary search are counted together where both reached a range,
+# so the bar shows how far each one adds to the other.
 OVERLAP_PARTS = (
     ("only going backwards", BLUE),
     ("both", AQUA),
@@ -312,7 +312,7 @@ def overlap_part(row) -> str:
     return "no way"
 
 
-# Figure 4: one bar per split, its parts the shares of the open ranges.
+# Figure 4: one bar per split, its parts the shares of the uncovered ranges.
 def extension_figure(extension_rows_by_split, path: Path):
     figure, axis = plt.subplots(figsize=(TEXT_WIDTH, 1.3))
     for height, split in enumerate(SPLITS):
@@ -325,7 +325,7 @@ def extension_figure(extension_rows_by_split, path: Path):
     axis.invert_yaxis()
     axis.set_xlim(0, 1)
     axis.set_xticks([0, 0.25, 0.5, 0.75, 1], ["0%", "25%", "50%", "75%", "100%"])
-    axis.set_xlabel("share of the open ranges the extension tried")
+    axis.set_xlabel("share of the uncovered ranges the extension tried")
     axis.grid(False)
     handles = [plt.Rectangle((0, 0), 1, 1, color=color) for _, color in OVERLAP_PARTS]
     figure.legend(
