@@ -25,6 +25,7 @@ fuzzer-with-bound = "evaluation:main"
 fuzzer-extension = "extension:main"
 fuzzer-results = "results:main"
 fuzzer-jvm-check = "jvm_check:main"
+fuzzer-figures = "figures:main"
 
 [tool.uv.sources]
 fuzzer = { path = "../fuzzer", editable = true }

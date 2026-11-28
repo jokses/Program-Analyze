@@ -99,7 +99,10 @@ def fuzz(
     bound: frozenset | None = None,
     max_runs_since_new: int = MAX_RUNS_SINCE_NEW,
     targets: frozenset = frozenset(),
+    covered_after: list[int] | None = None,
 ) -> Result:
+    # covered_after, when given, gets the number of covered ranges after each run,
+    # for the coverage curves of fuzzer-figures.
     # The same method, version and seed give the same inputs.
     rand = random.Random(f"{methodid.encode()}|{version}|{seed}")
     method = bc.getmethod(methodid)
@@ -142,6 +145,8 @@ def fuzz(
         outcomes.add(trace.outcome)
         instructions |= trace.instructions
         ranges |= trace.ranges
+        if covered_after is not None:
+            covered_after.append(len(ranges))
         for target in targets & trace.ranges:
             target_runs.setdefault(target, runs)
         if version == Version.INSTRUCTION:
