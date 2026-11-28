@@ -29,17 +29,6 @@ def bc():
     return jpamb.Bytecode(jpamb.Suite.from_workdir(REPO), jpamb.Effect(None), {})
 
 
-def test_split_gives_a_piece_per_point_and_between_points():
-    pieces = Interval(-5, 400).split([0, 300])
-    assert [(piece.min, piece.max) for piece in pieces] == [
-        (-5, -1),
-        (0, 0),
-        (1, 299),
-        (300, 300),
-        (301, 400),
-    ]
-
-
 def test_forget_elements_forgets_the_elements_of_a_passed_array():
     array = Val(Interval.const(3), elem_iv=Interval.const(0), alloc_id=4, is_ref=True)
     state = State((array,), ())

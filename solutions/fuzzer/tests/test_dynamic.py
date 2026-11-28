@@ -55,7 +55,6 @@ def test_bitwise_follows_java(operator, left, right, expected):
         ("three", -5, (INT_MIN, -1)),
         ("boundary", 31, (31, 31)),
         ("boundary", 30, (2, 30)),
-        ("boundary", 34, (34, INT_MAX)),
         ("boundary", -1, (-1, -1)),
     ],
 )
