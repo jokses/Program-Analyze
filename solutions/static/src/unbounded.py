@@ -129,12 +129,12 @@ def reduce_pair(iv: Interval, out: Pieces) -> tuple[Interval, Pieces]:
     return Interval(low, high) & iv, out
 
 
-# The errors and the value of a op b on the pieces. The value is None when the
+# The errors and the value of left op right on the pieces. The value is None when the
 # pieces give only errors.
 def pieces_arithmetic(
-    a: Pieces, b: Pieces, op: jvm.BinaryOpr
+    left: Pieces, right: Pieces, op: jvm.BinaryOpr
 ) -> tuple[set[str], Pieces | None]:
-    results = a.arithmetic(b, op)
+    results = left.arithmetic(right, op)
     errors = {result for result in results if isinstance(result, str)}
     values = [result for result in results if not isinstance(result, str)]
     return errors, next(iter(values), None)
@@ -184,34 +184,34 @@ class Val:
 
     def join(
         self,
-        o: Val,
+        other: Val,
         K: set[int] | list[int] | None = None,
         narrow: bool = False,
     ) -> Val:
         if narrow:
-            iv = self.iv.narrow(o.iv)
+            iv = self.iv.narrow(other.iv)
             out = self.out
-            elem_iv = self.elem_iv.narrow(o.elem_iv)
+            elem_iv = self.elem_iv.narrow(other.elem_iv)
         elif K is not None:
             k_set = set(K)
-            iv = self.iv.widen(o.iv, k_set)
-            out = self.out.widen(o.out, k_set)
-            elem_iv = self.elem_iv.widen(o.elem_iv, k_set)
+            iv = self.iv.widen(other.iv, k_set)
+            out = self.out.widen(other.out, k_set)
+            elem_iv = self.elem_iv.widen(other.elem_iv, k_set)
         else:
-            iv = self.iv | o.iv
-            out = self.out | o.out
-            elem_iv = self.elem_iv | o.elem_iv
+            iv = self.iv | other.iv
+            out = self.out | other.out
+            elem_iv = self.elem_iv | other.elem_iv
 
         return Val(
             iv=iv,
-            src=self.src if self.src == o.src else None,
-            may_null=self.may_null or o.may_null,
-            may_nonnull=self.may_nonnull or o.may_nonnull,
+            src=self.src if self.src == other.src else None,
+            may_null=self.may_null or other.may_null,
+            may_nonnull=self.may_nonnull or other.may_nonnull,
             elem_iv=elem_iv,
-            len_of=self.len_of if self.len_of == o.len_of else None,
-            bounded_by=self.bounded_by if self.bounded_by == o.bounded_by else None,
-            alloc_id=self.alloc_id if self.alloc_id == o.alloc_id else None,
-            is_ref=self.is_ref or o.is_ref,
+            len_of=self.len_of if self.len_of == other.len_of else None,
+            bounded_by=self.bounded_by if self.bounded_by == other.bounded_by else None,
+            alloc_id=self.alloc_id if self.alloc_id == other.alloc_id else None,
+            is_ref=self.is_ref or other.is_ref,
             out=out,
         )
 
@@ -263,22 +263,22 @@ class State(sexpr.AsSExpr):
             tuple(a.join(b, K, narrow) for a, b in zip(self.stack, other.stack)),
         )
 
-    def push(self, v: Val) -> State:
-        return State(self.locals, self.stack + (v,))
+    def push(self, value: Val) -> State:
+        return State(self.locals, self.stack + (value,))
 
-    def pop(self, n: int = 1) -> tuple[tuple[Val, ...], State]:
-        if n == 0:
+    def pop(self, count: int = 1) -> tuple[tuple[Val, ...], State]:
+        if count == 0:
             return (), self
-        return self.stack[-n:], State(self.locals, self.stack[:-n])
+        return self.stack[-count:], State(self.locals, self.stack[:-count])
 
     def load(self, idx: int) -> Val:
         return self.locals[idx] if idx < len(self.locals) else Val.top()
 
-    def store(self, idx: int, v: Val, preserve_bound: bool = False) -> State:
+    def store(self, idx: int, value: Val, preserve_bound: bool = False) -> State:
         locs = list(self.locals)
         if idx >= len(locs):
             locs.extend([Val.bot()] * (idx - len(locs) + 1))
-        locs[idx] = v
+        locs[idx] = value
         new_locs = tuple(
             replace(
                 x,
@@ -621,21 +621,21 @@ class UnboundedIntervalAnalysis:
     # The successors of a call to a method in the bytecode, or None for a library
     # method which has no bytecode here.
     def _call(
-        self, pc: PC, m: jvm.AbsMethodID, args: list[Val], after: State
+        self, pc: PC, method: jvm.AbsMethodID, args: list[Val], after: State
     ) -> list[tuple[PC, State]] | None:
         try:
-            callee = self.bc.getmethod(m)
+            callee = self.bc.getmethod(method)
         except (FileNotFoundError, IndexError):
             return None
         out = []
-        if m.extension.return_type is None:
+        if method.extension.return_type is None:
             out.append((pc + 1, after))
         else:
-            self.call_sites.setdefault(m, set()).add(pc)
-            if m in self.return_vals:
-                out.append((pc + 1, after.push(self.return_vals[m])))
+            self.call_sites.setdefault(method, set()).add(pc)
+            if method in self.return_vals:
+                out.append((pc + 1, after.push(self.return_vals[method])))
         locs = args + [Val.bot()] * (callee.max_locals - len(args))
-        out.append((PC(m, 0), State(tuple(locs), ())))
+        out.append((PC(method, 0), State(tuple(locs), ())))
         return out
 
     def step(self, pc: PC, state: State) -> list[tuple[PC, State] | str]:

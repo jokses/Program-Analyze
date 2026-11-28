@@ -1,6 +1,6 @@
+import argparse
 import json
 import math
-import statistics
 import sys
 from collections import defaultdict
 
@@ -11,11 +11,6 @@ from unbounded import UnboundedIntervalAnalysis
 
 import jpamb
 import jvm
-
-
-def load(path):
-    with open(path) as lines:
-        return [json.loads(line) for line in lines]
 
 
 # fuzzer-results pairs the seeds and fuzzer-jvm-check builds the bound of one split
@@ -39,16 +34,14 @@ def has_unreachable_code(bc, methodid) -> bool:
     return False
 
 
-def median(values):
-    values = list(values)
-    return statistics.median(values) if values else "-"
-
-
 # Source: https://www.stat.umn.edu/geyer/5601/examp/sign.html
-# The one-sided sign test: the chance that range wins at least this many of the n
-# paired seeds when both versions are equally good. A tie counts against range.
-def sign_test(wins: int, n: int) -> float:
-    return sum(math.comb(n, k) for k in range(wins, n + 1)) / 2**n if n else 1.0
+# The p-value of the one-sided sign test: the probability that range wins at least
+# this many of the paired seeds when both versions are equally good. A tie counts
+# against range.
+def sign_test(wins: int, pairs: int) -> float:
+    if not pairs:
+        return 1.0
+    return sum(math.comb(pairs, k) for k in range(wins, pairs + 1)) / 2**pairs
 
 
 # A pair is one run of each version with the same seed number. The random inputs
@@ -95,22 +88,22 @@ def fuzzer_numbers(bc, rows):
             continue
         instruction = [first["runs"] for first, _ in seeds]
         range_ = [second["runs"] for _, second in seeds]
-        ratios.append(median(instruction) / median(range_))
+        ratios.append(checks.median(instruction) / checks.median(range_))
         earlier += sum(
             range_runs < instruction_runs
             for instruction_runs, range_runs in zip(instruction, range_)
         )
         pairs += len(seeds)
         print(
-            f"  {method}: instruction {median(instruction)} runs"
+            f"  {method}: instruction {checks.median(instruction)} runs"
             f" [{min(instruction)}, {max(instruction)}],"
-            f" range {median(range_)} runs [{min(range_)}, {max(range_)}]"
+            f" range {checks.median(range_)} runs [{min(range_)}, {max(range_)}]"
         )
     print(
         "methods with parameters and unreachable code",
         len(unreachable),
         "median runs of instruction / range",
-        median(ratios),
+        checks.median(ratios),
     )
     print(
         "range stops earlier than instruction in",
@@ -192,7 +185,7 @@ def fuzzer_numbers(bc, rows):
             "stops",
             dict(stops),
             "| runs after the last new coverage",
-            median(row["runs"] - row["last_new_run"] for row in version_rows),
+            checks.median(row["runs"] - row["last_new_run"] for row in version_rows),
             "| seeds missing a listed outcome",
             missed,
             "of",
@@ -214,7 +207,7 @@ def fuzzer_numbers(bc, rows):
         "of",
         len(on_bound),
     )
-    covered = median(
+    covered = checks.median(
         (row["bound_size"] - row["bound_not_covered"]) / row["bound_size"]
         for row in range_rows
         if row["bound_size"]
@@ -250,19 +243,26 @@ def designed_numbers(rows):
                 "of",
                 len(targets),
                 "seeds, median runs",
-                median(runs),
+                checks.median(runs),
             )
 
 
-# fuzzer-results RUNS.jsonl [EXTENSION.jsonl] prints the numbers the proposal asks for.
 def main():
+    parser = argparse.ArgumentParser(
+        description="Print the numbers of the evaluation for one split and domain."
+    )
+    parser.add_argument("runs", help="the JSON lines file of fuzzer-with-bound")
+    parser.add_argument(
+        "extension", nargs="?", help="the JSON lines file of fuzzer-extension"
+    )
+    args = parser.parse_args()
     suite, eff = jpamb.setup()
     bc = jpamb.Bytecode(suite, eff, {})
-    runs = load(sys.argv[1])
+    runs = checks.read_rows(args.runs)
     split_and_domain(runs)
     fuzzer_numbers(bc, runs)
-    if len(sys.argv) > 2:
-        rows = load(sys.argv[2])
+    if args.extension:
+        rows = checks.read_rows(args.extension)
         split_and_domain(runs + rows)
         extension.summary(rows, sys.stdout)
         designed_numbers(rows)

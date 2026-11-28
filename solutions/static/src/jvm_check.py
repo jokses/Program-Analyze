@@ -1,11 +1,12 @@
+import argparse
 import subprocess
-import sys
 from collections import defaultdict
 
+import checks
 import dynamic
 import fuzzer
 import jvm_agent
-from results import load, split_and_domain
+from results import split_and_domain
 from unbounded import RangeCoverageOracle
 
 import jpamb
@@ -43,10 +44,14 @@ def in_bound(bound, pc: PC, value: int) -> bool:
     )
 
 
-# fuzzer-jvm-check RUNS.jsonl runs every kept input of fuzzer-with-bound again on the
-# JVM with the agent, and compares the outcome and the divisors with ours.
 def main():
-    rows = [row for row in load(sys.argv[1]) if row["stop_reason"] != "crash"]
+    parser = argparse.ArgumentParser(
+        description="Run every kept input of fuzzer-with-bound again on the JVM with"
+        " the agent, and compare the outcome and the divisors with ours."
+    )
+    parser.add_argument("runs", help="the JSON lines file of fuzzer-with-bound")
+    rows = checks.read_rows(parser.parse_args().runs)
+    rows = [row for row in rows if row["stop_reason"] != "crash"]
     suite, eff = jpamb.setup()
     bc = jpamb.Bytecode(suite, eff, {})
     kept = defaultdict(set)

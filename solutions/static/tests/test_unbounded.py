@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import dynamic
+import fuzzer
 import pytest
 from unbounded import (
     INT_MIN,
@@ -21,6 +22,11 @@ from jvm.state import PC
 REPO = Path(__file__).resolve().parents[3]
 
 
+@pytest.fixture(scope="module")
+def bc():
+    return jpamb.Bytecode(jpamb.Suite.from_workdir(REPO), jpamb.Effect(None), {})
+
+
 def test_split_gives_a_piece_per_point_and_between_points():
     pieces = Interval(-5, 400).split([0, 300])
     assert [(piece.min, piece.max) for piece in pieces] == [
@@ -32,7 +38,7 @@ def test_split_gives_a_piece_per_point_and_between_points():
     ]
 
 
-def test_call_forgets_the_elements_of_a_passed_array():
+def test_forget_elements_forgets_the_elements_of_a_passed_array():
     array = Val(Interval.const(3), elem_iv=Interval.const(0), alloc_id=4, is_ref=True)
     state = State((array,), ())
     passed = Val(
@@ -48,22 +54,19 @@ def test_call_forgets_the_elements_of_a_passed_array():
     ("domain", "zero_in_bound"),
     [("sets", False), ("signs", False), ("outliers", True)],
 )
-def test_leaving_out_zero_at_the_division_after_n_not_zero(domain, zero_in_bound):
-    suite = jpamb.Suite.from_workdir(REPO)
-    bc = jpamb.Bytecode(suite, jpamb.Effect(None), {})
+def test_build_leaves_out_zero_at_the_division_after_n_not_zero(
+    bc, domain, zero_in_bound
+):
     methodid = jvm.AbsMethodID.decode("jpamb.cases.Simple.checkBeforeDivideByN2:(I)I")
     oracle = RangeCoverageOracle.build(bc, methodid, "three", domain)
     assert ((PC(methodid, 4), 1, 0, 0) in oracle.upper_bound) == zero_in_bound
 
 
-def test_backwards_through_the_loop_in_division_loop():
-    suite = jpamb.Suite.from_workdir(REPO)
-    bc = jpamb.Bytecode(suite, jpamb.Effect(None), {})
+def test_solve_uncovered_range_undoes_the_loop_in_division_loop(bc):
     methodid = jvm.AbsMethodID.decode("jpamb.cases.Dependent.divisionLoop:(I)V")
     oracle = RangeCoverageOracle.build(bc, methodid, "three")
-    run = dynamic.run(
-        bc, methodid, jpamb.case.Input((jpamb.case.Int(7),)), max_steps=1000
-    )
+    input = jpamb.case.Input((jpamb.case.Int(7),))
+    run = dynamic.run(bc, methodid, input, max_steps=fuzzer.MAX_STEPS)
     # n == 32 at the assertion, after dividing n by 2 five times.
     target = (PC(methodid, 15), 0, 32, 32)
     assert oracle.analysis.solve_uncovered_range(target, run.path) == Interval(
@@ -88,6 +91,6 @@ def to_char(iv):
         (to_char, -1, 5, 0),
     ],
 )
-def test_pieces_keep_the_value_java_gives(operation, low, high, java):
+def test_map_pieces_keeps_the_value_java_gives(operation, low, high, java):
     out = map_pieces(pieces_from_interval(Interval(low, high)), operation)
     assert any(piece.min <= java <= piece.max for piece in out.pieces)

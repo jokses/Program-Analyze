@@ -23,7 +23,7 @@ def test_refine_leaves_out_the_point_a_value_differs_from(opr, outcome):
 
 
 # Java rounds a division toward 0, so 1 / -2 == 0.
-def test_division_by_pieces_on_both_sides_of_zero_keeps_every_result():
+def test_arithmetic_keeps_every_result_of_a_division_by_pieces_around_zero():
     [value] = of((1, 1)).arithmetic(of((-2, -1), (1, 2)), jvm.BinaryOpr.Div)
     assert all(
         any(piece.min <= x <= piece.max for piece in value.pieces) for x in (-1, 0, 1)
@@ -31,7 +31,7 @@ def test_division_by_pieces_on_both_sides_of_zero_keeps_every_result():
 
 
 # i = i + 1 in a loop grows forever without widening.
-def test_widening_stops_when_a_loop_counts_up():
+def test_widen_stops_when_a_loop_counts_up():
     value = of((0, 0))
     for _ in range(20):
         [counted] = value.arithmetic(of((1, 1)), jvm.BinaryOpr.Add)

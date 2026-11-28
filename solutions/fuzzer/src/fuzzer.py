@@ -39,6 +39,10 @@ def methods_reached(bc: jpamb.Bytecode, methodid: jvm.AbsMethodID) -> set:
     return methods
 
 
+# A range of Trace.ranges with pc.encode() in place of the pc, as in the JSON rows.
+type EncodedRange = tuple[str, int, int, int]
+
+
 @dataclass(frozen=True)
 class Result:
     method: str
@@ -54,7 +58,7 @@ class Result:
     last_new_run: int = 0
     outcomes: tuple[str, ...] = ()
     instructions: tuple[str, ...] = ()
-    ranges: tuple[tuple[str, int, int, int], ...] = ()
+    ranges: tuple[EncodedRange, ...] = ()
     kept_inputs: tuple[str, ...] = ()
     # Only with a bound from the interval analysis.
     analysis_seconds: float = 0.0
@@ -62,7 +66,7 @@ class Result:
     bound_not_covered: int | None = None
     # Ranges the fuzzer reached that the bound rules out. Any of them means the bound
     # is wrong.
-    outside_bound: tuple[tuple[str, int, int, int], ...] = ()
+    outside_bound: tuple[EncodedRange, ...] = ()
     # The run that first reached each goal, for the goals that were reached.
     goal_runs: tuple[tuple[str, int, int, int, int], ...] = ()
     error: str | None = None
@@ -176,7 +180,7 @@ def fuzz(
         )
 
 
-def encode(ranges: set) -> tuple[tuple[str, int, int, int], ...]:
+def encode(ranges: set) -> tuple[EncodedRange, ...]:
     return tuple(sorted((pc.encode(), *rest) for pc, *rest in ranges))
 
 

@@ -6,12 +6,14 @@ from pathlib import Path
 import jpamb
 import jvm
 
+# The method, the instruction index and the position of an operand the agent records.
+type Operand = tuple[str, int, int]
+
 
 @dataclass
 class AgentObservation:
     outcome: str
-    # (method, instruction index, operand) -> the values in the order the run saw them
-    values: dict[tuple[str, int, int], list[int]]
+    values: dict[Operand, list[int]]
 
 
 # Built with the commands in solutions/fuzzer/README.md.
@@ -21,7 +23,7 @@ CLASSES = "build/jvm/classes"
 
 # The VALUES part of the file the agent writes when the JVM exits, with lines like
 # jpamb.cases.Simple.divideByN:(I)I#2#1=3.
-def parse_agent_values(text: str) -> dict[tuple[str, int, int], list[int]]:
+def parse_agent_values(text: str) -> dict[Operand, list[int]]:
     lines = text.splitlines()
     values = {}
     for line in lines[lines.index("VALUES") + 1 : lines.index("OUTCOMES")]:

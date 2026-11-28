@@ -18,5 +18,5 @@ BOUND = {
     ("value", "inside"),
     [(-5, True), (1, True), (INT_MAX, True), (0, False)],
 )
-def test_in_bound_only_with_a_divisor_range_around_the_value(value, inside):
+def test_in_bound_is_true_only_with_a_divisor_range_around_the_value(value, inside):
     assert in_bound(BOUND, DIVIDE, value) == inside

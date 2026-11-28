@@ -1,6 +1,6 @@
+import argparse
 import json
 import statistics
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -11,6 +11,17 @@ import jvm
 
 # The ranges our methods are written to reach. The pcs are from `jpamb inspect`.
 DESIGNED_RANGES = Path(__file__).resolve().parents[1] / "designed_ranges.json"
+
+
+def read_rows(path: str) -> list[dict]:
+    with open(path) as lines:
+        return [json.loads(line) for line in lines]
+
+
+# The median, or - without values, like for a way that reached no target.
+def median(values):
+    values = list(values)
+    return statistics.median(values) if values else "-"
 
 
 def expected_outcomes() -> dict[str, set[str]]:
@@ -46,10 +57,13 @@ def reached(row, designed) -> bool:
 
 
 def main():
-    rows = []
-    for file in sys.argv[1:]:
-        with open(file) as lines:
-            rows += [json.loads(line) for line in lines]
+    parser = argparse.ArgumentParser(
+        description="Summarize fuzzer rows per method, split, domain and version."
+    )
+    parser.add_argument(
+        "rows", nargs="+", help="JSON lines files of fuzzer or fuzzer-with-bound"
+    )
+    rows = [row for path in parser.parse_args().rows for row in read_rows(path)]
     expected = expected_outcomes()
     designed_ranges = defaultdict(list)
     for designed in json.loads(DESIGNED_RANGES.read_text()):
@@ -86,7 +100,7 @@ def main():
         bound = "-"
         if runs[0]["bound_size"] is not None:
             covered = [row["bound_size"] - row["bound_not_covered"] for row in runs]
-            bound = f"{statistics.median(covered)}/{runs[0]['bound_size']}"
+            bound = f"{median(covered)}/{runs[0]['bound_size']}"
         outside = sum(len(row["outside_bound"]) for row in runs)
         print(
             method,
@@ -94,8 +108,8 @@ def main():
             domain,
             version,
             len(runs),
-            statistics.median(row["runs"] for row in runs),
-            round(statistics.median(seconds), 3),
+            median(row["runs"] for row in runs),
+            round(median(seconds), 3),
             dict(stops),
             dict(missed),
             bound,

@@ -1,10 +1,10 @@
 import argparse
 import contextlib
 import json
-import statistics
 import sys
 from dataclasses import dataclass
 
+import checks
 import dynamic
 import fuzzer
 from unbounded import DOMAINS, Interval, RangeCoverageOracle, UnboundedIntervalAnalysis
@@ -168,8 +168,7 @@ def summary(rows, file):
     print("targets", len(rows), file=file)
     for way in WAYS:
         runs = [row[way] for row in rows if row[way] is not None]
-        median = statistics.median(runs) if runs else "-"
-        print(way, "reached", len(runs), "median runs", median, file=file)
+        print(way, "reached", len(runs), "median runs", checks.median(runs), file=file)
 
 
 def main():

@@ -1,35 +1,44 @@
-from dynamic import Draw, constant_code, fuzz_type
-from hypothesis import given
-from hypothesis import strategies as st
+from pathlib import Path
 
-import jpamb.case
+import pytest
+from fuzzer import methods_reached
+
+import jpamb
 import jvm
 
+REPO = Path(__file__).resolve().parents[3]
 
-def st_types():
-    return st.sampled_from(
-        [
-            jvm.Int(),
-            jvm.Boolean(),
-            jvm.Array(jvm.Int()),
-            jvm.Array(jvm.Char()),
-            jvm.Object(jvm.ClassName("java.lang.String")),
-        ]
-    )
+CYCLE = {
+    "callsCallCycle:(II)I",
+    "callsCallCycleNext:(II)I",
+    "callsCallCycleFork:(II)I",
+    "callsCallCycleLoop:(II)I",
+    "boundSize:(I)I",
+}
 
 
-@given(st.binary(), st_types())
-def test_fuzz_type(code: bytes, target: jvm.Type):
-    value = fuzz_type(Draw(code), target)
-
-    assert isinstance(value, jpamb.case.Value)
-    assert value.type == target
-
-
-@given(st.integers(-(2**31), 2**31 - 1))
-def test_constant_code_reads_back_as_the_constant(constant: int):
-    params = [jvm.Int(), jvm.Array(jvm.Int())]
-    draw = Draw(constant_code(params, constant))
-
-    assert fuzz_type(draw, jvm.Int()).value == constant
-    assert fuzz_type(draw, jvm.Array(jvm.Int())).values == (constant,)
+# callsBowtie also calls AssertionError.<init>, and the calls from callsCallCycle
+# go through four other methods and back to it.
+@pytest.mark.parametrize(
+    ("method", "reached"),
+    [
+        (
+            "callsBowtie:(II)I",
+            {
+                "callsBowtie:(II)I",
+                "bowtieLeft:(II)I",
+                "bowtieRight:(II)I",
+                "bowtieLeftBack:(II)I",
+                "bowtieRightBack:(II)I",
+            },
+        ),
+        ("callsCallCycle:(II)I", CYCLE),
+    ],
+)
+def test_methods_reached_follows_every_call_into_case_methods_only(method, reached):
+    bc = jpamb.Bytecode(jpamb.Suite.from_workdir(REPO), jpamb.Effect(None), {})
+    methodid = jvm.AbsMethodID.decode(f"jpamb.cases.Calls.{method}")
+    called = methods_reached(bc, methodid)
+    assert {
+        callee.encode().removeprefix("jpamb.cases.Calls.") for callee in called
+    } == reached
